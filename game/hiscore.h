@@ -15,9 +15,10 @@
 typedef struct {
     uint32_t best_score;
     uint32_t best_lines;    /* lines of the best game */
-    uint32_t best_level;    /* level the best game ended at */
+    uint32_t best_level;    /* level the best game ended at, 0..255 */
     uint32_t games;         /* games finished, ever */
     uint32_t human_best;    /* best score of a human player (touch) */
+    uint32_t settings;      /* 24 bits the application keeps here (app.c) */
 } hiscore_t;
 
 /* Reads the latest valid record. Fills *out with zeros if there is none.

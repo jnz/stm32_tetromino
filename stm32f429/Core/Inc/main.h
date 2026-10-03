@@ -16,6 +16,10 @@ void Error_Handler(void);
 #define NCS_MEMS_SPI_Pin         GPIO_PIN_1
 #define NCS_MEMS_SPI_GPIO_Port   GPIOC
 
+/* User button B1 (blue), active high, pulled down on the board. */
+#define B1_Pin                   GPIO_PIN_0
+#define B1_GPIO_Port             GPIOA
+
 /* The two on-board LEDs. */
 #define LD3_Pin                  GPIO_PIN_13   /* green */
 #define LD4_Pin                  GPIO_PIN_14   /* red   */

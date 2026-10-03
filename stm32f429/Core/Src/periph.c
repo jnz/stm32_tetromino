@@ -79,6 +79,7 @@ static void gpio_init(void)
 {
     GPIO_InitTypeDef g = {0};
 
+    __HAL_RCC_GPIOA_CLK_ENABLE();
     __HAL_RCC_GPIOC_CLK_ENABLE();
     __HAL_RCC_GPIOG_CLK_ENABLE();
 
@@ -94,6 +95,12 @@ static void gpio_init(void)
     HAL_GPIO_WritePin(LD3_GPIO_Port, LD3_Pin | LD4_Pin, GPIO_PIN_RESET);
     g.Pin = LD3_Pin | LD4_Pin;
     HAL_GPIO_Init(LD3_GPIO_Port, &g);
+
+    /* User button. The board has the pull-down and an RC filter. */
+    g.Pin  = B1_Pin;
+    g.Mode = GPIO_MODE_INPUT;
+    g.Pull = GPIO_NOPULL;
+    HAL_GPIO_Init(B1_GPIO_Port, &g);
 }
 
 static void i2c3_init(void)

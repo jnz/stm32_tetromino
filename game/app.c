@@ -43,10 +43,35 @@ static uint32_t next_seed(app_t *a)
     return x;
 }
 
+/* Settings as kept in hiscore_t.settings: fast drop in bit 2. Bits 0..1
+ * are not used and may be set in records written by earlier firmware. */
+#define SET_FAST             0x4U
+
+static void settings_from_store(app_t *a)
+{
+    a->fast = (a->hs.settings & SET_FAST) != 0U;
+}
+
+/* Every save writes the settings too, so a pending one is done with it. A
+ * failed save only costs the record, the game goes on. */
+static void save(app_t *a)
+{
+    a->settings_dirty = 0;
+    (void)hiscore_save(&a->hs);
+}
+
+static void settings_changed(app_t *a, uint32_t now_ms)
+{
+    a->hs.settings = a->fast ? SET_FAST : 0U;
+    a->settings_dirty = 1;
+    a->settings_ms = now_ms;
+}
+
 static void new_game(app_t *a, int human)
 {
     tetris_init(&a->game, next_seed(a));
     a->game.ai_blunder = a->blunder;
+    a->game.ai_superfast = a->fast;
     a->game.ai_active = (uint8_t)!human;
     a->human = (uint8_t)(human != 0);
     a->best_before = human ? a->hs.human_best : a->hs.best_score;
@@ -61,12 +86,28 @@ static void new_game(app_t *a, int human)
 void app_init(app_t *a, uint32_t seed, uint16_t blunder, uint32_t now_ms)
 {
     hiscore_load(&a->hs);
+    settings_from_store(a);
     /* The game count keeps the seed moving even if the platform's source
      * of randomness came up empty. */
     a->rng = (seed ^ (a->hs.games * 0x9E3779B9U)) | 1U;
     a->blunder = blunder;
     a->now_ms = now_ms;
     new_game(a, 0);
+}
+
+/* --------------------------------------------------------------------- */
+/* Button                                                                */
+/* --------------------------------------------------------------------- */
+
+void app_button(app_t *a, int pressed, uint32_t now_ms)
+{
+    /* On the press, not the release: the switch shows at once. */
+    if (pressed && !a->btn_down) {
+        a->fast = (uint8_t)!a->fast;
+        a->game.ai_superfast = a->fast;
+        settings_changed(a, now_ms);
+    }
+    a->btn_down = (uint8_t)(pressed != 0);
 }
 
 /* --------------------------------------------------------------------- */
@@ -160,6 +201,9 @@ void app_tick(app_t *a, uint32_t now_ms)
 {
     a->now_ms = now_ms;
 
+    if (a->settings_dirty && now_ms - a->settings_ms >= APP_SETTINGS_SAVE_MS)
+        save(a);
+
     if (a->game_over) {
         /* After a human's game the AI takes over again. */
         if (now_ms - a->over_since_ms >= APP_GAMEOVER_MS)
@@ -195,7 +239,7 @@ void app_tick(app_t *a, uint32_t now_ms)
             blink(&a->led_red, now_ms, 1000U, 0U, 1U);
         a->hs.games++;
         take_score(a);
-        (void)hiscore_save(&a->hs);   /* a failed save only costs the record */
+        save(a);
         return;
     }
 
@@ -203,7 +247,7 @@ void app_tick(app_t *a, uint32_t now_ms)
         now_ms - a->checkpoint_ms >= APP_CHECKPOINT_MS) {
         a->checkpoint_ms = now_ms;
         take_score(a);
-        (void)hiscore_save(&a->hs);
+        save(a);
     }
 }
 

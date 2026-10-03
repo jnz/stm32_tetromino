@@ -50,6 +50,13 @@
  * still trying to save the game does not start the next one. */
 #define APP_TAKEOVER_GUARD_MS 1000U
 
+/* The user button (B1, blue, on the DISC1) switches fast drop on and off
+ * as it goes down: the AI drops a piece the moment it is in place
+ * (ai_superfast, the "i" key of the browser version), which scores a point
+ * per row dropped. The setting is kept in flash, APP_SETTINGS_SAVE_MS after
+ * the last change, so a few presses in a row write one record. */
+#define APP_SETTINGS_SAVE_MS  5000U
+
 /* The two user LEDs (green and red on the DISC1):
  *   green  blinks once per line cleared, four times for a tetromino clear
  *   red    6 blinks when the running game overtakes the all-time best,
@@ -93,6 +100,10 @@ typedef struct {
     uint32_t  started_ms;      /* start of this game */
     app_blink_t led_green;
     app_blink_t led_red;
+    uint8_t   fast;            /* fast drop for the AI */
+    uint8_t   btn_down;        /* button seen pressed at the last call */
+    uint8_t   settings_dirty;  /* changed, not saved yet */
+    uint32_t  settings_ms;     /* time of the last change */
 } app_t;
 
 /* Loads the high score and starts the first game. seed should differ
@@ -100,6 +111,11 @@ typedef struct {
  * per mille of random placements, 0 = perfect play (which in practice
  * never ends). */
 void app_init(app_t *a, uint32_t seed, uint16_t blunder, uint32_t now_ms);
+
+/* The user button's level, 1 = pressed. Call once per app_tick(). Sampled
+ * at the game step, which also debounces it: a contact bounces for a few
+ * milliseconds, a step is 50. */
+void app_button(app_t *a, int pressed, uint32_t now_ms);
 
 /* Touch input. Call right before every app_tick(), it sets the keys that
  * tick consumes. */

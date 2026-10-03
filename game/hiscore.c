@@ -6,7 +6,8 @@
  *    1  sequence number, starts at 1
  *    2  best score
  *    3  best lines
- *    4  best level
+ *    4  best level in bits 0..7, settings in bits 8..31 (0 in records
+ *       from before there were settings, which is what the defaults are)
  *    5  games
  *    6  best score of a human player (0 in records from before touch
  *       control, which kept this word reserved at 0)
@@ -79,7 +80,8 @@ void hiscore_load(hiscore_t *out)
             best_off = off;
             out->best_score = r[2];
             out->best_lines = r[3];
-            out->best_level = r[4];
+            out->best_level = r[4] & 0xFFU;
+            out->settings   = r[4] >> 8;
             out->games      = r[5];
             out->human_best = r[6];
         }
@@ -102,7 +104,7 @@ int hiscore_save(const hiscore_t *hs)
     rec[1] = s_seq + 1U;
     rec[2] = hs->best_score;
     rec[3] = hs->best_lines;
-    rec[4] = hs->best_level;
+    rec[4] = (hs->best_level & 0xFFU) | (hs->settings << 8);
     rec[5] = hs->games;
     rec[6] = hs->human_best;
     rec[7] = crc32(rec, 7U);

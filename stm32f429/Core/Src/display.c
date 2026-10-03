@@ -51,6 +51,18 @@ static void sdram_sleep(void)
     HAL_GPIO_Init(GPIOB, &g);
 }
 
+/* The palette into a layer's CLUT. The CLUT may only be written while its
+ * layer is off (or in vertical blanking): written into a live layer,
+ * entries get lost and the two layers end up with different palettes,
+ * which flickers. The caller makes sure the layer is off. */
+static void clut_write(uint32_t i)
+{
+    uint32_t k;
+
+    for (k = 0; k < 256U; k++)
+        layer(i)->CLUTWR = (k << 24) | (asset_pal[k] & 0x00FFFFFFU);
+}
+
 static int layer_init(uint32_t i)
 {
     LTDC_LayerCfgTypeDef cfg = {0};
@@ -70,22 +82,14 @@ static int layer_init(uint32_t i)
     if (HAL_LTDC_ConfigLayer(&s_ltdc, &cfg, i) != HAL_OK)
         return -1;
 
-    /* The palette, the same for both layers. HAL_LTDC_ConfigLayer() has
-     * just switched the layer on, and the CLUT may only be written while
-     * its layer is off (or in vertical blanking). Written into a live
-     * layer, entries got lost and the two layers ended up with different
-     * palettes: every other frame flickered in other colours. So off,
-     * reload, write, then CLUT on, layer stays off until present(). */
+    /* HAL_LTDC_ConfigLayer() has just switched the layer on. Off for the
+     * CLUT (see clut_write()), then CLUT on, layer stays off until
+     * present() shows it. */
     layer(i)->CR &= ~LTDC_LxCR_LEN;
     LTDC->SRCR = LTDC_SRCR_IMR;
     while ((LTDC->SRCR & LTDC_SRCR_IMR) != 0U) {
     }
-    {
-        uint32_t k;
-
-        for (k = 0; k < 256U; k++)
-            layer(i)->CLUTWR = (k << 24) | (asset_pal[k] & 0x00FFFFFFU);
-    }
+    clut_write(i);
     layer(i)->CR |= LTDC_LxCR_CLUTEN;
     LTDC->SRCR = LTDC_SRCR_IMR;
     while ((LTDC->SRCR & LTDC_SRCR_IMR) != 0U) {

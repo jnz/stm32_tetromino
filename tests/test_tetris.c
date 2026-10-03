@@ -549,6 +549,67 @@ static void scenario_leds(void)
  * Two buffers alternate like the display's, each with its own cache, and
  * start out as garbage, as the SDRAM does. Several games with game overs,
  * level ups, line flashes and a touch takeover with its hint overlay. */
+/* One game step with the button at the given level. */
+static uint32_t step_button(app_t *a, int pressed, uint32_t now)
+{
+    now += TETRIS_TICK_MS;
+    app_button(a, pressed, now);
+    app_tick(a, now);
+    return now;
+}
+
+static void scenario_button_toggles_fast_drop(void)
+{
+    static app_t a;
+    uint32_t now = 0;
+    int n;
+
+    flash_ram_reset(0xFF);
+    app_init(&a, 9U, 0U, now);
+    CHECK(!a.fast && !a.game.ai_superfast);
+
+    /* On as the button goes down, not again while it is held. */
+    now = step_button(&a, 1, now);
+    CHECK(a.fast && a.game.ai_superfast);
+    for (n = 0; n < 40; n++)
+        now = step_button(&a, 1, now);
+    CHECK(a.fast);
+    now = step_button(&a, 0, now);
+    CHECK(a.fast);
+
+    /* The AI now hard drops. */
+    for (n = 0; n < 2000; n++)
+        now = step_button(&a, 0, now);
+    CHECK(a.game.warpcount > 10U);
+    CHECK(!a.settings_dirty);   /* saved by now */
+
+    /* Kept across a power cycle, and the next game has it too. */
+    memset(&a, 0, sizeof a);
+    app_init(&a, 10U, 0U, 0U);
+    CHECK(a.fast && a.game.ai_superfast);
+
+    /* Off again with the next press. */
+    now = step_button(&a, 1, 0U);
+    now = step_button(&a, 0, now);
+    CHECK(!a.fast && !a.game.ai_superfast);
+}
+
+static void scenario_settings_and_level_share_a_word(void)
+{
+    hiscore_t h;
+
+    flash_ram_reset(0xFF);
+    hiscore_load(&h);
+    CHECK(h.settings == 0U);
+    h.best_level = 20U;
+    h.settings = 0x5U;
+    CHECK(hiscore_save(&h) == 0);
+    memset(&h, 0, sizeof h);
+    hiscore_load(&h);
+    CHECK(h.best_level == 20U);
+    CHECK(h.settings == 0x5U);
+}
+
 static void scenario_partial_render_matches_full(void)
 {
     static uint8_t fb[2][RENDER_W * RENDER_H];
@@ -577,6 +638,8 @@ static void scenario_partial_render_matches_full(void)
         } else {
             touch_at(&a, 0, 0, 0, 0, now);
         }
+        /* a press at one point: fast drop and its title tag */
+        app_button(&a, n >= 3000U && n < 3004U, now);
         app_tick(&a, now);
         seen_levelup |= a.game.levelup_ticks > 0U;
         seen_flash |= a.game.state == TETRIS_CLEARLINES;
@@ -664,6 +727,8 @@ int main(void)
         { "touch_hold_repeats", scenario_touch_hold_repeats },
         { "human_best_separate", scenario_human_best_separate },
         { "leds", scenario_leds },
+        { "button_toggles_fast_drop", scenario_button_toggles_fast_drop },
+        { "settings_and_level_share_a_word", scenario_settings_and_level_share_a_word },
         { "partial_render_matches_full", scenario_partial_render_matches_full },
         { "render_smoke", scenario_render_smoke },
     };

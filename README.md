@@ -66,6 +66,14 @@ make shots           # renders frames and game over screens to build/shots
   only draws the cells and values that differ. `make test` checks every
   partial frame pixel by pixel against a full one.
 - **Unattended.** Independent watchdog (~4 s), faults reset the board.
+- **User button** (B1, blue): fast drop on or off, the AI drops each piece
+  as soon as it is in place (`AI>>` in the title bar). A hard drop scores a
+  point per row, so fast games score a little more. Kept in flash, 5 s
+  after the last change.
+- **Backlight.** Not under firmware control on this board: LEDA is on the
+  3 V rail and the four cathodes go to ground through 0 ohm resistors
+  R47-R50, the ILI9341's backlight output (BC) is not connected (UM1670
+  Rev 1, figure 16).
 - **LEDs.** Green LD3 blinks once per cleared line (four times for a
   tetromino clear). Red LD4 blinks 6 times when the running game overtakes
   the all-time best, along with "NEW RECORD!" on a record game over, and is

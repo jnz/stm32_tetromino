@@ -306,7 +306,8 @@ static void draw_title_best(uint8_t *fb, uint32_t score, uint32_t lines,
 
 /* Everything the title bar shows, so that a change in any of it redraws
  * the bar: mode (0 best score, 1 level up notice), the number, the lines,
- * whether the lines are shown, and the AI/YOU tag. */
+ * whether the lines are shown, and the tag: bit 0 AI (else YOU), bit 1
+ * fast drop. */
 static void title_key(uint32_t key[5], const tetris_t *t, const render_info_t *info)
 {
     /* The best game so far, this one included once it is ahead. */
@@ -323,12 +324,12 @@ static void title_key(uint32_t key[5], const tetris_t *t, const render_info_t *i
         key[2] = leading ? t->lines : info->best_lines;
         key[3] = !info->human;
     }
-    key[4] = t->ai_active;
+    key[4] = (t->ai_active ? 1U : 0U) | (t->ai_superfast ? 2U : 0U);
 }
 
 static void draw_title_bar(uint8_t *fb, const uint32_t key[5])
 {
-    const char *tag = key[4] ? "AI" : "YOU";
+    const char *tag = (key[4] & 1U) ? ((key[4] & 2U) ? "AI>>" : "AI") : "YOU";
     const int xmax = RENDER_W - 6 - text_width(&font_big, tag) - 8;
     char buf[24];
     int y;
@@ -347,7 +348,7 @@ static void draw_title_bar(uint8_t *fb, const uint32_t key[5])
         draw_title_best(fb, key[1], key[2], (int)key[3], xmax);
 
     draw_text_right(fb, &font_big, RENDER_W - 6, 3, tag,
-                    key[4] ? C_RED : C_GREEN);
+                    (key[4] & 1U) ? C_RED : C_GREEN);
 }
 
 /* A field cell as a 16 bit key, everything that decides its pixels:

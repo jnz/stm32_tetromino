@@ -147,6 +147,9 @@ int main(void)
             }
             app_touch(&s_app, &tp, now);
             tp.down = 0;
+            app_button(&s_app,
+                       HAL_GPIO_ReadPin(B1_GPIO_Port, B1_Pin) == GPIO_PIN_SET,
+                       now);
             app_tick(&s_app, now);
             dt = DWT->CYCCNT - t0;
             if (dt > g_timing.tick_max_cyc)
