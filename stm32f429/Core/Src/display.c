@@ -22,6 +22,7 @@ static uint8_t s_fb[2][DISPLAY_WIDTH * DISPLAY_HEIGHT]
     __attribute__((section(".framebuffer"), aligned(8)));
 
 static LTDC_HandleTypeDef s_ltdc;
+static int      s_rotated; /* MADCTL as last written          */
 static uint32_t s_front;   /* layer index currently on screen */
 static uint32_t s_back;    /* layer index we draw into        */
 
@@ -139,16 +140,10 @@ int display_init(void)
     if (HAL_LTDC_Init(&s_ltdc) != HAL_OK)
         return -1;
 
-    /* Panel register sequence over SPI5. */
+    /* Panel register sequence over SPI5. It leaves the panel unturned. */
     ili9341_drv.Init();
-
-#if DISPLAY_ROTATE_180
-    /* MADCTL after the init sequence, which writes 0xC8 = MY | MX | BGR.
-     * Clearing MY and MX turns both scan directions around. BGR is the
-     * panel's colour order and stays. */
-    ili9341_WriteReg(LCD_MAC);
-    ili9341_WriteData(0x08);
-#endif
+    s_rotated = 0;
+    display_set_rotated(DISPLAY_ROTATE_180);
 
     if (layer_init(0) != 0 || layer_init(1) != 0)
         return -2;
@@ -180,6 +175,24 @@ uint8_t *display_back_buffer(void)
 int display_back_index(void)
 {
     return (int)s_back;
+}
+
+void display_set_rotated(int rotated)
+{
+    rotated = (rotated != 0);
+    if (rotated == s_rotated)
+        return;
+    /* MADCTL. The init sequence writes 0xC8 = MY | MX | BGR, clearing MY
+     * and MX turns both scan directions around. BGR is the panel's colour
+     * order and stays. */
+    ili9341_WriteReg(LCD_MAC);
+    ili9341_WriteData(rotated ? 0x08 : 0xC8);
+    s_rotated = rotated;
+}
+
+int display_rotated(void)
+{
+    return s_rotated;
 }
 
 void display_present(void)

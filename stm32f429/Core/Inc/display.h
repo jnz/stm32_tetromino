@@ -15,9 +15,10 @@
  */
 #include <stdint.h>
 
-/* Panel orientation. 0 = as the board is labelled (ST-LINK USB at the
- * top), 1 = turned by 180 degrees, e.g. to stand the board with the cable
- * going down. Set from the Makefile, "make ROTATE=1".
+/* Panel orientation at start. 0 = as the board is labelled (ST-LINK USB at
+ * the top), 1 = turned by 180 degrees, e.g. to stand the board with the
+ * cable going down. Set from the Makefile, "make ROTATE=1".
+ * display_set_rotated() changes it while running.
  *
  * One register in the panel (MADCTL), not a transform of the framebuffer,
  * so it costs nothing. 90 degrees is not possible this way. */
@@ -48,5 +49,10 @@ int display_back_index(void);
 /* Hand the back buffer to the LTDC and take the other one. Returns
  * immediately, the hardware swaps at the next vertical blanking. */
 void display_present(void);
+
+/* Picture turned by 180 degrees (1) or not (0). Writes the panel register
+ * over SPI only when it changes. */
+void display_set_rotated(int rotated);
+int  display_rotated(void);
 
 #endif /* TETRIS_DISPLAY_H */

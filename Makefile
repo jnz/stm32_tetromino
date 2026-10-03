@@ -1,10 +1,20 @@
-# Host build of the Tetromino ornament: tests and the simulator.
-# The firmware has its own Makefile in stm32f429/.
+# Tetromino desktop ornament: one entry point for everything.
 #
-#   make test      build and run the host tests
-#   make sim       build build/sim (see sim/sim.c for its options)
-#   make shots     render a few frames and game over screens to build/shots
-#   make assets    regenerate game/assets.[ch] from art/ (needs Pillow)
+# Firmware (cross compiler, see stm32f429/Makefile for TOOLCHAIN_ROOT):
+#   make firmware        build stm32f429/firmware.elf
+#   make flash           build and flash over the on-board ST-LINK
+#   make clean-firmware  remove the firmware build
+#   Options on the command line are passed through, e.g.
+#   make flash INFOTEXT=zwiener.org ROTATE=1
+#
+# Host (any C11 gcc):
+#   make test            build and run the host tests
+#   make sim             build build/sim (see sim/sim.c for its options)
+#   make shots           render a few frames and game over screens to build/shots
+#   make assets          regenerate game/assets.[ch] from art/ (needs Pillow)
+#   make clean           remove the host build
+#
+# Plain "make" runs the host tests and builds the simulator.
 
 # make's built-in default for CC is cc, which MinGW does not have.
 ifeq ($(origin CC),default)
@@ -17,9 +27,22 @@ BUILD   := build
 GAME    := game/tetris.c game/render.c game/assets.c game/hiscore.c game/app.c
 HDRS    := $(wildcard game/*.h sim/*.h)
 
-.PHONY: all test sim shots assets clean
+.PHONY: all test sim shots assets clean firmware flash clean-firmware
 
 all: test sim
+
+# --- firmware, built by stm32f429/Makefile ---------------------------------
+
+firmware:
+	$(MAKE) -C stm32f429
+
+flash:
+	$(MAKE) -C stm32f429 flash
+
+clean-firmware:
+	$(MAKE) -C stm32f429 clean
+
+# --- host ------------------------------------------------------------------
 
 $(BUILD):
 	mkdir -p $(BUILD)

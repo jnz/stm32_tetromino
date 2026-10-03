@@ -558,7 +558,7 @@ static uint32_t step_button(app_t *a, int pressed, uint32_t now)
     return now;
 }
 
-static void scenario_button_toggles_fast_drop(void)
+static void scenario_button_short_press_fast_drop(void)
 {
     static app_t a;
     uint32_t now = 0;
@@ -568,14 +568,13 @@ static void scenario_button_toggles_fast_drop(void)
     app_init(&a, 9U, 0U, now);
     CHECK(!a.fast && !a.game.ai_superfast);
 
-    /* On as the button goes down, not again while it is held. */
+    /* Switches when let go, not while held. */
     now = step_button(&a, 1, now);
-    CHECK(a.fast && a.game.ai_superfast);
-    for (n = 0; n < 40; n++)
-        now = step_button(&a, 1, now);
-    CHECK(a.fast);
+    now = step_button(&a, 1, now);
+    CHECK(!a.fast);
     now = step_button(&a, 0, now);
-    CHECK(a.fast);
+    CHECK(a.fast && a.game.ai_superfast);
+    CHECK(!a.flipped);
 
     /* The AI now hard drops. */
     for (n = 0; n < 2000; n++)
@@ -592,6 +591,38 @@ static void scenario_button_toggles_fast_drop(void)
     now = step_button(&a, 1, 0U);
     now = step_button(&a, 0, now);
     CHECK(!a.fast && !a.game.ai_superfast);
+}
+
+static void scenario_button_long_press_flips(void)
+{
+    static app_t a;
+    uint32_t now = 0;
+    uint32_t held = 0;
+    int n;
+
+    flash_ram_reset(0xFF);
+    app_init(&a, 9U, 0U, now);
+    CHECK(!a.flipped);
+
+    /* Flips while still held, once the long press time is reached. */
+    while (held < APP_LONG_PRESS_MS + TETRIS_TICK_MS) {
+        now = step_button(&a, 1, now);
+        held += TETRIS_TICK_MS;
+        if (held <= APP_LONG_PRESS_MS - TETRIS_TICK_MS)
+            CHECK(!a.flipped);
+    }
+    CHECK(a.flipped);
+    /* Held on: no second flip. Let go: not also a short press. */
+    for (n = 0; n < 40; n++)
+        now = step_button(&a, 1, now);
+    now = step_button(&a, 0, now);
+    CHECK(a.flipped && !a.fast);
+
+    for (n = 0; n < (int)(APP_SETTINGS_SAVE_MS / TETRIS_TICK_MS) + 1; n++)
+        now = step_button(&a, 0, now);
+    memset(&a, 0, sizeof a);
+    app_init(&a, 10U, 0U, 0U);
+    CHECK(a.flipped && !a.fast);
 }
 
 static void scenario_settings_and_level_share_a_word(void)
@@ -741,7 +772,8 @@ int main(void)
         { "touch_hold_repeats", scenario_touch_hold_repeats },
         { "human_best_separate", scenario_human_best_separate },
         { "leds", scenario_leds },
-        { "button_toggles_fast_drop", scenario_button_toggles_fast_drop },
+        { "button_short_press_fast_drop", scenario_button_short_press_fast_drop },
+        { "button_long_press_flips", scenario_button_long_press_flips },
         { "settings_and_level_share_a_word", scenario_settings_and_level_share_a_word },
         { "partial_render_matches_full", scenario_partial_render_matches_full },
         { "render_smoke", scenario_render_smoke },

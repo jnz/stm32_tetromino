@@ -77,15 +77,15 @@ static void map_to_pixels(uint16_t raw_x, uint16_t raw_y,
     if      (x < 0)                  x = 0;
     else if (x >= (int32_t)DISPLAY_WIDTH)  x = (int32_t)DISPLAY_WIDTH - 1;
 
-#if DISPLAY_ROTATE_180
-    /* The picture is turned in the panel (display.h), which the touch
-     * panel underneath it knows nothing about. Turning the coordinates the
-     * same way keeps them what they claim to be: pixels on the picture the
-     * user is looking at. Both clamps above ran first, so this cannot
-     * leave the screen. */
-    x = (int32_t)DISPLAY_WIDTH  - 1 - x;
-    y = (int32_t)DISPLAY_HEIGHT - 1 - y;
-#endif
+    if (display_rotated()) {
+        /* The picture is turned in the panel (display.h), which the touch
+         * panel underneath it knows nothing about. Turning the coordinates
+         * the same way keeps them what they claim to be: pixels on the
+         * picture the user is looking at. Both clamps above ran first, so
+         * this cannot leave the screen. */
+        x = (int32_t)DISPLAY_WIDTH  - 1 - x;
+        y = (int32_t)DISPLAY_HEIGHT - 1 - y;
+    }
 
     *px = (uint16_t)x;
     *py = (uint16_t)y;

@@ -13,7 +13,7 @@
  * reports a press edge besides the level.
  *
  * COORDINATES are pixels on the 240x320 panel as the picture is shown,
- * rotation included (DISPLAY_ROTATE_180). The conversion is ST's fixed
+ * rotation included (display_rotated()). The conversion is ST's fixed
  * calibration for a revision D panel (USE_STM32F429I_DISCOVERY_REVD in the
  * Makefile), nominal rather than measured: expect the corners to be a few
  * pixels off.

@@ -50,11 +50,16 @@
  * still trying to save the game does not start the next one. */
 #define APP_TAKEOVER_GUARD_MS 1000U
 
-/* The user button (B1, blue, on the DISC1) switches fast drop on and off
- * as it goes down: the AI drops a piece the moment it is in place
- * (ai_superfast, the "i" key of the browser version), which scores a point
- * per row dropped. The setting is kept in flash, APP_SETTINGS_SAVE_MS after
- * the last change, so a few presses in a row write one record. */
+/* The user button (B1, blue, on the DISC1):
+ *   short press   fast drop on or off, when the button is let go: the AI
+ *                 drops a piece the moment it is in place (ai_superfast,
+ *                 the "i" key of the browser version), which scores a
+ *                 point per row dropped
+ *   long press    picture turned by 180 degrees, or back, while the button
+ *                 is still held, so the hand knows when to let go
+ * Both settings are kept in flash, APP_SETTINGS_SAVE_MS after the last
+ * change, so a few presses in a row write one record. */
+#define APP_LONG_PRESS_MS     1000U
 #define APP_SETTINGS_SAVE_MS  5000U
 
 /* The two user LEDs (green and red on the DISC1):
@@ -101,7 +106,10 @@ typedef struct {
     app_blink_t led_green;
     app_blink_t led_red;
     uint8_t   fast;            /* fast drop for the AI */
-    uint8_t   btn_down;        /* button seen pressed at the last call */
+    uint8_t   flipped;         /* picture turned against the build default */
+    uint8_t   btn_down;        /* button held since btn_since_ms */
+    uint8_t   btn_long;        /* the long press fired for this hold */
+    uint32_t  btn_since_ms;
     uint8_t   settings_dirty;  /* changed, not saved yet */
     uint32_t  settings_ms;     /* time of the last change */
     const char *infotext;      /* shown bottom right, NULL = none. Set

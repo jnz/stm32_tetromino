@@ -122,6 +122,8 @@ int main(void)
     next = HAL_GetTick();
     app_init(&s_app, periph_random() ^ DWT->CYCCNT, AI_BLUNDER, next);
     s_app.infotext = TETRIS_INFOTEXT;
+    /* The button flips against the build's ROTATE, as saved. */
+    display_set_rotated(DISPLAY_ROTATE_180 ^ s_app.flipped);
 
     for (;;) {
         const uint32_t now = HAL_GetTick();
@@ -157,6 +159,7 @@ int main(void)
                        HAL_GPIO_ReadPin(B1_GPIO_Port, B1_Pin) == GPIO_PIN_SET,
                        now);
             app_tick(&s_app, now);
+            display_set_rotated(DISPLAY_ROTATE_180 ^ s_app.flipped);
             dt = DWT->CYCCNT - t0;
             if (dt > g_timing.tick_max_cyc)
                 g_timing.tick_max_cyc = dt;

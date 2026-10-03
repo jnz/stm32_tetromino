@@ -12,7 +12,8 @@ same board.
 ```
 game/        platform independent: game core + AI, renderer, high score store,
              ornament flow (app.c), generated artwork (assets.c)
-stm32f429/   firmware: HAL, BSP, display + flash glue, Makefile
+stm32f429/   firmware: HAL, BSP, display and flash glue, its own Makefile
+             (called from the top level one)
 sim/         host simulator, writes frames as PPM
 tests/       host tests
 tools/       gen_assets.py (artwork from art/ -> game/assets.c)
@@ -22,19 +23,26 @@ art/         tile sheet and background of the browser version, input of
 
 ## Build and flash
 
-```
-cd stm32f429
-make                 # needs TOOLCHAIN_ROOT in stm32f429/config.mk
-make flash           # STM32_Programmer_CLI over the on-board ST-LINK
-make ROTATE=1        # picture turned by 180 degrees (USB cable at the bottom)
-make INFOTEXT=zwiener.org   # a line of text bottom right in the side panel
-```
-
-Host side, from the repository root (any C11 gcc):
+Everything from the repository root:
 
 ```
-make test            # game rules, AI, flash store incl. torn writes, renderer
-make shots           # renders frames and game over screens to build/shots
+make flash           # build the firmware and flash it over the on-board ST-LINK
+make firmware        # build only (stm32f429/firmware.elf)
+make test            # host tests: game rules, AI, flash store, renderer
+make shots           # host simulator, renders frames to build/shots
+```
+
+The firmware needs the arm-none-eabi toolchain: put its path into
+`stm32f429/config.mk`, e.g. `TOOLCHAIN_ROOT=C:/ST/STM32CubeCLT_1.21.0/GNU-tools-for-STM32/bin/`.
+The host targets need any C11 gcc.
+
+Options for the firmware go on the same command line:
+
+```
+make flash ROTATE=1              # picture turned by 180 degrees (USB cable at the bottom)
+make flash INFOTEXT=zwiener.org  # a line of text bottom right in the side panel
+make flash AI_BLUNDER=50         # the AI places 5 % of its pieces at random
+make flash DEBUG=1               # probe can attach while running, see below
 ```
 
 ## Behaviour
@@ -67,9 +75,11 @@ make shots           # renders frames and game over screens to build/shots
   only draws the cells and values that differ. `make test` checks every
   partial frame pixel by pixel against a full one.
 - **Unattended.** Independent watchdog (~4 s), faults reset the board.
-- **User button** (B1, blue): fast drop on or off, the AI drops each piece
-  as soon as it is in place (`AI>` in the title bar). A hard drop scores a
-  point per row, so fast games score a little more. Kept in flash, 5 s
+- **User button** (B1, blue). Short press: fast drop on or off, the AI
+  drops each piece as soon as it is in place (`AI>` in the title bar). A
+  hard drop scores a point per row, so fast games score a little more.
+  Long press (1 s): picture turned by 180 degrees, or back. The turn is
+  relative to the build's `ROTATE`. Both settings are kept in flash, 5 s
   after the last change.
 - **LEDs.** Green LD3 blinks once per cleared line (four times for a
   tetromino clear). Red LD4 blinks 6 times when the running game overtakes

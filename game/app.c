@@ -43,13 +43,16 @@ static uint32_t next_seed(app_t *a)
     return x;
 }
 
-/* Settings as kept in hiscore_t.settings: fast drop in bit 2. Bits 0..1
- * are not used and may be set in records written by earlier firmware. */
+/* Settings as kept in hiscore_t.settings: fast drop in bit 2, picture
+ * flipped in bit 3. Bits 0..1 are not used and may be set in records
+ * written by earlier firmware. */
 #define SET_FAST             0x4U
+#define SET_FLIPPED          0x8U
 
 static void settings_from_store(app_t *a)
 {
     a->fast = (a->hs.settings & SET_FAST) != 0U;
+    a->flipped = (a->hs.settings & SET_FLIPPED) != 0U;
 }
 
 /* Every save writes the settings too, so a pending one is done with it. A
@@ -62,7 +65,7 @@ static void save(app_t *a)
 
 static void settings_changed(app_t *a, uint32_t now_ms)
 {
-    a->hs.settings = a->fast ? SET_FAST : 0U;
+    a->hs.settings = (a->fast ? SET_FAST : 0U) | (a->flipped ? SET_FLIPPED : 0U);
     a->settings_dirty = 1;
     a->settings_ms = now_ms;
 }
@@ -101,13 +104,25 @@ void app_init(app_t *a, uint32_t seed, uint16_t blunder, uint32_t now_ms)
 
 void app_button(app_t *a, int pressed, uint32_t now_ms)
 {
-    /* On the press, not the release: the switch shows at once. */
-    if (pressed && !a->btn_down) {
+    if (pressed) {
+        if (!a->btn_down) {
+            a->btn_down = 1;
+            a->btn_long = 0;
+            a->btn_since_ms = now_ms;
+        } else if (!a->btn_long && now_ms - a->btn_since_ms >= APP_LONG_PRESS_MS) {
+            a->btn_long = 1;
+            a->flipped = (uint8_t)!a->flipped;
+            settings_changed(a, now_ms);
+        }
+        return;
+    }
+    /* Let go. A short press can only be told from a long one now. */
+    if (a->btn_down && !a->btn_long) {
         a->fast = (uint8_t)!a->fast;
         a->game.ai_superfast = a->fast;
         settings_changed(a, now_ms);
     }
-    a->btn_down = (uint8_t)(pressed != 0);
+    a->btn_down = 0;
 }
 
 /* --------------------------------------------------------------------- */
