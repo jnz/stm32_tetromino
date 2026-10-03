@@ -1,5 +1,9 @@
 # Tetromino desktop ornament (STM32F429I-DISC1)
 
+![Tetromino on the STM32F429I-DISC1](tetromino.gif)
+
+Play the browser version: <https://zwiener.org/tetromino.html>
+
 AI port (Claude Code) of my browser Tetromino
 (<https://zwiener.org/tetromino.html>, 2011-2016) to the
 STM32F429I-DISC1 with its 240x320 panel. The AI plays, and when it loses, the

@@ -6,6 +6,8 @@
  *   sim [options]
  *     -t TICKS    game ticks to run (50 ms each)                 [2000]
  *     -e EVERY    write every n-th frame, 0 = none                 [0]
+ *     -S START    no frames before this tick                       [0]
+ *     -i TEXT     info text bottom right in the panel
  *     -o DIR      where frames go                                  [.]
  *     -s SEED     seed                                             [1]
  *     -b PERMILLE AI blunder rate                                  [50]
@@ -49,7 +51,8 @@ static void write_ppm(const char *dir, const char *name, uint32_t n)
 
 int main(int argc, char **argv)
 {
-    unsigned long ticks = 2000, every = 0, seed = 1, blunder = 50;
+    unsigned long ticks = 2000, every = 0, seed = 1, blunder = 50, start = 0;
+    const char *infotext = NULL;
     const char *dir = ".";
     const char *flashfile = NULL;
     int shot_gameover = 0;
@@ -83,6 +86,8 @@ int main(int argc, char **argv)
         else if (strcmp(a, "-s") == 0) seed = strtoul(v, NULL, 0);
         else if (strcmp(a, "-b") == 0) blunder = strtoul(v, NULL, 0);
         else if (strcmp(a, "-f") == 0) flashfile = v;
+        else if (strcmp(a, "-S") == 0) start = strtoul(v, NULL, 0);
+        else if (strcmp(a, "-i") == 0) infotext = v;
         else {
             fprintf(stderr, "unknown option %s\n", a);
             return 2;
@@ -97,6 +102,7 @@ int main(int argc, char **argv)
     }
 
     app_init(&app, (uint32_t)seed, (uint16_t)blunder, now);
+    app.infotext = infotext;
     printf("loaded: best %u (%u lines, level %u), %u games\n",
            (unsigned)app.hs.best_score, (unsigned)app.hs.best_lines,
            (unsigned)app.hs.best_level, (unsigned)app.hs.games);
@@ -123,7 +129,7 @@ int main(int argc, char **argv)
                 write_ppm(dir, "gameover", app.hs.games);
             }
         }
-        if (every != 0 && i % every == 0) {
+        if (every != 0 && i >= start && i % every == 0) {
             app_render(&app, s_fb, NULL);
             write_ppm(dir, "frame", (uint32_t)i);
         }
