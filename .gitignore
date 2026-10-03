@@ -1,0 +1,5 @@
+# Build output
+/build/
+/stm32f429/build/
+/stm32f429/config.mk
+/stm32f429/firmware.*
