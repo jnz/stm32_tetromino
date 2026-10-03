@@ -25,6 +25,17 @@ art/         tile sheet and background of the browser version, input of
              gen_assets.py
 ```
 
+## Flash a prebuilt release
+
+No toolchain needed: download `firmware.bin` from the
+[releases page](https://github.com/jnz/stm32_tetromino/releases), connect
+the board through its ST-LINK USB port and copy the file onto the drive
+that shows up (DIS_F429ZI). The board restarts with the game.
+
+Alternatively flash `firmware.hex` with STM32CubeProgrammer, which only
+erases the sectors it writes, so a high score from an earlier version
+survives the update.
+
 ## Build and flash
 
 Everything from the repository root:
