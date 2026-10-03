@@ -207,7 +207,7 @@ void app_tick(app_t *a, uint32_t now_ms)
     }
 }
 
-void app_render(const app_t *a, uint32_t *fb, render_cache_t *cache)
+void app_render(const app_t *a, uint8_t *fb, render_cache_t *cache)
 {
     render_info_t info;
 

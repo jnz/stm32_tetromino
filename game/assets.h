@@ -28,9 +28,17 @@ typedef struct {
 #define ASSET_FONT_FIRST  32
 #define ASSET_FONT_LAST   126
 
-/* ARGB8888, index 0..6 = colour 1..7 of the game (I J L O S T Z). */
-extern const uint32_t asset_tile[7][ASSET_TILE * ASSET_TILE];
-extern const uint32_t asset_tile_flash[7][ASSET_TILE * ASSET_TILE];
+/* The 256 colour palette, 0x00RRGGBB, as the LTDC's CLUT takes it. */
+extern const uint32_t asset_pal[256];
+/* Palette index of the entry closest to grey level g. */
+extern const uint8_t  asset_grey[256];
+/* Palette index closest to a colour, by its RGB555 value
+ * (r >> 3 << 10 | g >> 3 << 5 | b >> 3). */
+extern const uint8_t  asset_inv[32768];
+
+/* Palette indices, index 0..6 = colour 1..7 of the game (I J L O S T Z). */
+extern const uint8_t  asset_tile[7][ASSET_TILE * ASSET_TILE];
+extern const uint8_t  asset_tile_flash[7][ASSET_TILE * ASSET_TILE];
 /* Grey level per pixel, blended over the field with a variable alpha. */
 extern const uint8_t  asset_tile_ghost[ASSET_TILE * ASSET_TILE];
 /* Grey level per pixel of the whole 10x22 tile field. */

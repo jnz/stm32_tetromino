@@ -1,5 +1,6 @@
 /*
  * See render.h. Plain CPU drawing, every primitive clips to the screen.
+ * Pixels are palette indices, colours are blended in RGB and mapped back.
  */
 #include "render.h"
 #include "assets.h"
@@ -15,9 +16,12 @@
 #define PANEL_W   (RENDER_W - PANEL_X)
 #define PANEL_PAD 6
 
+/* Colours are 0x00RRGGBB, pixels are palette indices (asset_pal). */
 #define RGB(r, g, b) \
-    (0xFF000000U | ((uint32_t)(r) << 16) | ((uint32_t)(g) << 8) | (uint32_t)(b))
+    (((uint32_t)(r) << 16) | ((uint32_t)(g) << 8) | (uint32_t)(b))
 
+/* Keep these in step with the C_* colours in tools/gen_assets.py, which
+ * builds the palette around them. */
 #define C_WHITE   RGB(255, 255, 255)
 #define C_LABEL   RGB(150, 150, 150)
 #define C_GOLD    RGB(240, 200, 90)
@@ -29,14 +33,29 @@
 /* Primitives                                                            */
 /* --------------------------------------------------------------------- */
 
-/* src over dst with alpha a (0..255), both opaque ARGB8888. */
-static uint32_t blend(uint32_t dst, uint32_t src, uint32_t a)
+/* The palette index closest to a colour. Greys, which most of the screen
+ * is, map exactly, everything else through the RGB555 table. */
+static uint8_t px(uint32_t rgb)
 {
-    const uint32_t na = 255U - a;
-    const uint32_t rb = ((dst & 0x00FF00FFU) * na + (src & 0x00FF00FFU) * a) >> 8;
-    const uint32_t g  = ((dst & 0x0000FF00U) * na + (src & 0x0000FF00U) * a) >> 8;
+    const uint32_t r = (rgb >> 16) & 0xFFU;
+    const uint32_t g = (rgb >> 8) & 0xFFU;
+    const uint32_t b = rgb & 0xFFU;
 
-    return 0xFF000000U | (rb & 0x00FF00FFU) | (g & 0x0000FF00U);
+    if (r == g && g == b)
+        return asset_grey[r];
+    return asset_inv[((r >> 3) << 10) | ((g >> 3) << 5) | (b >> 3)];
+}
+
+/* src over the pixel dst with alpha a (0..255), mixed in RGB and turned
+ * back into a palette index. */
+static uint8_t blend(uint8_t dst, uint32_t src, uint32_t a)
+{
+    const uint32_t d = asset_pal[dst];
+    const uint32_t na = 255U - a;
+    const uint32_t rb = ((d & 0x00FF00FFU) * na + (src & 0x00FF00FFU) * a) >> 8;
+    const uint32_t g  = ((d & 0x0000FF00U) * na + (src & 0x0000FF00U) * a) >> 8;
+
+    return px((rb & 0x00FF00FFU) | (g & 0x0000FF00U));
 }
 
 static int clip(int *x, int *y, int *w, int *h)
@@ -48,21 +67,18 @@ static int clip(int *x, int *y, int *w, int *h)
     return *w > 0 && *h > 0;
 }
 
-static void fill_rect(uint32_t *fb, int x, int y, int w, int h, uint32_t c)
+static void fill_rect(uint8_t *fb, int x, int y, int w, int h, uint32_t c)
 {
-    int i, j;
+    const uint8_t idx = px(c);
+    int j;
 
     if (!clip(&x, &y, &w, &h))
         return;
-    for (j = 0; j < h; j++) {
-        uint32_t *p = fb + (size_t)(y + j) * RENDER_W + (size_t)x;
-
-        for (i = 0; i < w; i++)
-            p[i] = c;
-    }
+    for (j = 0; j < h; j++)
+        memset(fb + (size_t)(y + j) * RENDER_W + (size_t)x, idx, (size_t)w);
 }
 
-static void blend_rect(uint32_t *fb, int x, int y, int w, int h,
+static void blend_rect(uint8_t *fb, int x, int y, int w, int h,
                        uint32_t c, uint32_t a)
 {
     int i, j;
@@ -70,7 +86,7 @@ static void blend_rect(uint32_t *fb, int x, int y, int w, int h,
     if (!clip(&x, &y, &w, &h))
         return;
     for (j = 0; j < h; j++) {
-        uint32_t *p = fb + (size_t)(y + j) * RENDER_W + (size_t)x;
+        uint8_t *p = fb + (size_t)(y + j) * RENDER_W + (size_t)x;
 
         for (i = 0; i < w; i++)
             p[i] = blend(p[i], c, a);
@@ -79,29 +95,25 @@ static void blend_rect(uint32_t *fb, int x, int y, int w, int h,
 
 /* One tile bitmap at pixel position (x, y). Tiles are only ever drawn
  * inside the screen, so there is no clipping here. */
-static void draw_tile(uint32_t *fb, int x, int y, const uint32_t *tile)
+static void draw_tile(uint8_t *fb, int x, int y, const uint8_t *tile)
 {
-    int i, j;
+    int j;
 
-    for (j = 0; j < TILE; j++) {
-        uint32_t *p = fb + (size_t)(y + j) * RENDER_W + (size_t)x;
-        const uint32_t *s = tile + j * TILE;
-
-        for (i = 0; i < TILE; i++)
-            p[i] = s[i];
-    }
+    for (j = 0; j < TILE; j++)
+        memcpy(fb + (size_t)(y + j) * RENDER_W + (size_t)x, tile + j * TILE,
+               (size_t)TILE);
 }
 
-static void draw_ghost(uint32_t *fb, int x, int y, uint32_t a)
+static void draw_ghost(uint8_t *fb, int x, int y, uint32_t a)
 {
     int i, j;
 
     for (j = 0; j < TILE; j++) {
-        uint32_t *p = fb + (size_t)(y + j) * RENDER_W + (size_t)x;
+        uint8_t *p = fb + (size_t)(y + j) * RENDER_W + (size_t)x;
         const uint8_t *s = asset_tile_ghost + j * TILE;
 
         for (i = 0; i < TILE; i++)
-            p[i] = blend(p[i], 0xFF000000U | (uint32_t)s[i] * 0x010101U, a);
+            p[i] = blend(p[i], (uint32_t)s[i] * 0x010101U, a);
     }
 }
 
@@ -127,7 +139,7 @@ static int text_width(const asset_font_t *f, const char *s)
 
 /* Text with its box's top left corner at (x, y), alpha a over everything
  * the glyph covers. */
-static void draw_text_a(uint32_t *fb, const asset_font_t *f, int x, int y,
+static void draw_text_a(uint8_t *fb, const asset_font_t *f, int x, int y,
                         const char *s, uint32_t c, uint32_t a)
 {
     for (; *s != '\0'; s++) {
@@ -143,7 +155,7 @@ static void draw_text_a(uint32_t *fb, const asset_font_t *f, int x, int y,
             for (i = 0; i < g->width; i++) {
                 const int px = x + g->xoff + i;
                 const uint32_t cov = bm[j * g->width + i];
-                uint32_t *p;
+                uint8_t *p;
 
                 if (cov == 0U || px < 0 || px >= RENDER_W)
                     continue;
@@ -156,20 +168,20 @@ static void draw_text_a(uint32_t *fb, const asset_font_t *f, int x, int y,
 }
 
 /* With the half transparent drop shadow of drawtext() in the browser. */
-static void draw_text(uint32_t *fb, const asset_font_t *f, int x, int y,
+static void draw_text(uint8_t *fb, const asset_font_t *f, int x, int y,
                       const char *s, uint32_t c)
 {
-    draw_text_a(fb, f, x + 1, y + 1, s, 0xFF000000U, 128U);
+    draw_text_a(fb, f, x + 1, y + 1, s, RGB(0, 0, 0), 128U);
     draw_text_a(fb, f, x, y, s, c, 255U);
 }
 
-static void draw_text_right(uint32_t *fb, const asset_font_t *f, int xr,
+static void draw_text_right(uint8_t *fb, const asset_font_t *f, int xr,
                             int y, const char *s, uint32_t c)
 {
     draw_text(fb, f, xr - text_width(f, s), y, s, c);
 }
 
-static void draw_text_center(uint32_t *fb, const asset_font_t *f, int xc,
+static void draw_text_center(uint8_t *fb, const asset_font_t *f, int xc,
                              int y, const char *s, uint32_t c)
 {
     draw_text(fb, f, xc - text_width(f, s) / 2, y, s, c);
@@ -251,7 +263,7 @@ static const char *fmt_short(char *buf, uint32_t v)
  * space left of the AI/YOU tag allows: score in the big font, then both
  * small, then the lines shortened. Holds for the largest values a uint32_t
  * takes, which a perfect AI running for months could get near. */
-static void draw_title_best(uint32_t *fb, uint32_t score, uint32_t lines,
+static void draw_title_best(uint8_t *fb, uint32_t score, uint32_t lines,
                             int show_lines, int xmax)
 {
     const int x0 = 6;
@@ -314,7 +326,7 @@ static void title_key(uint32_t key[5], const tetris_t *t, const render_info_t *i
     key[4] = t->ai_active;
 }
 
-static void draw_title_bar(uint32_t *fb, const uint32_t key[5])
+static void draw_title_bar(uint8_t *fb, const uint32_t key[5])
 {
     const char *tag = key[4] ? "AI" : "YOU";
     const int xmax = RENDER_W - 6 - text_width(&font_big, tag) - 8;
@@ -392,7 +404,7 @@ static void field_keys(uint16_t key[][TETRIS_COLS], const tetris_t *t)
 
 /* One cell from its key, in the order the whole field used to be drawn:
  * background, map tile, ghost, falling piece. Row is a visible row. */
-static void draw_cell(uint32_t *fb, int row, int col, uint16_t key)
+static void draw_cell(uint8_t *fb, int row, int col, uint16_t key)
 {
     const int v = (int)(key & 0x000FU) - 8;
     const int px = FIELD_X + col * TILE;
@@ -403,13 +415,13 @@ static void draw_cell(uint32_t *fb, int row, int col, uint16_t key)
      * tiles into the image, as they do in the browser, where the title bar
      * covers its top. */
     for (y = 0; y < TILE; y++) {
-        uint32_t *p = fb + (size_t)(py + y) * RENDER_W + (size_t)px;
+        uint8_t *p = fb + (size_t)(py + y) * RENDER_W + (size_t)px;
         const uint8_t *s = asset_bg +
             (size_t)(row * TILE + y + TETRIS_HIDDEN_ROWS * TILE) * ASSET_BG_W +
             (size_t)(col * TILE);
 
         for (x = 0; x < TILE; x++)
-            p[x] = 0xFF000000U | (uint32_t)s[x] * 0x010101U;
+            p[x] = asset_grey[s[x]];
     }
 
     if (v > 0)
@@ -425,7 +437,7 @@ static void draw_cell(uint32_t *fb, int row, int col, uint16_t key)
 
 /* A value right aligned in the side panel. The big font while it fits,
  * else the small one, which takes even the largest uint32_t. */
-static void draw_value_str(uint32_t *fb, int xr, int y, const char *s, uint32_t c)
+static void draw_value_str(uint8_t *fb, int xr, int y, const char *s, uint32_t c)
 {
     const asset_font_t *f = &font_big;
 
@@ -436,7 +448,7 @@ static void draw_value_str(uint32_t *fb, int xr, int y, const char *s, uint32_t 
     draw_text_right(fb, f, xr, y, s, c);
 }
 
-static void draw_value(uint32_t *fb, int xr, int y, uint32_t v, uint32_t c)
+static void draw_value(uint8_t *fb, int xr, int y, uint32_t v, uint32_t c)
 {
     char buf[14];
 
@@ -475,7 +487,7 @@ static const char *fmt_time(char *buf, uint32_t ticks)
     return buf;
 }
 
-static void draw_preview(uint32_t *fb, int bx, int by, int bsize, int block)
+static void draw_preview(uint8_t *fb, int bx, int by, int bsize, int block)
 {
     const int n = tetris_piece_size(block);
     int minr = n, maxr = -1, minc = n, maxc = -1;
@@ -518,7 +530,7 @@ static const char *const k_value_label[5] = {
 };
 
 /* The panel background between rows y0 and y0 + h. */
-static void panel_bg(uint32_t *fb, int y0, int h)
+static void panel_bg(uint8_t *fb, int y0, int h)
 {
     int y;
 
@@ -530,7 +542,7 @@ static void panel_bg(uint32_t *fb, int y0, int h)
 }
 
 /* What never changes: background, separator, labels, preview frame. */
-static void draw_panel_static(uint32_t *fb)
+static void draw_panel_static(uint8_t *fb)
 {
     const int xl = PANEL_X + PANEL_PAD;
     int i;
@@ -554,7 +566,7 @@ static void value_keys(uint32_t key[5], const tetris_t *t, const render_info_t *
 /* One panel value over its own strip of background. The strip is one row
  * taller than the big font for the drop shadow, and the small font that
  * takes over for long numbers sits inside it. */
-static void draw_panel_value(uint32_t *fb, int i, uint32_t v)
+static void draw_panel_value(uint8_t *fb, int i, uint32_t v)
 {
     const int xr = RENDER_W - PANEL_PAD;
     char buf[24];
@@ -569,7 +581,7 @@ static void draw_panel_value(uint32_t *fb, int i, uint32_t v)
         draw_value(fb, xr, k_value_y[i], v, C_WHITE);
 }
 
-static void draw_game_over(uint32_t *fb, const tetris_t *t, const render_info_t *info)
+static void draw_game_over(uint8_t *fb, const tetris_t *t, const render_info_t *info)
 {
     const int xc = FIELD_X + FIELD_W / 2;
     char buf[24];
@@ -602,7 +614,7 @@ static void draw_game_over(uint32_t *fb, const tetris_t *t, const render_info_t 
 
 /* Where to touch, for the first seconds of a human game. Matches the
  * zones in app.c: the field in thirds, the panel for the hard drop. */
-static void draw_hint(uint32_t *fb)
+static void draw_hint(uint8_t *fb)
 {
     const int third = FIELD_W / 3;
     const int y = RENDER_H - 46;
@@ -622,7 +634,7 @@ void render_invalidate(render_cache_t *cache)
     cache->valid = 0;
 }
 
-void render_frame(uint32_t *fb, render_cache_t *cache, const tetris_t *t,
+void render_frame(uint8_t *fb, render_cache_t *cache, const tetris_t *t,
                   const render_info_t *info)
 {
     /* An overlay covers the field (the hints also part of the panel) and

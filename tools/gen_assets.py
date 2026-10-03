@@ -146,6 +146,130 @@ def font(path, px):
     return out, bottom - top, ascent - top
 
 
+# --------------------------------------------------------------------------
+# 256 colour palette
+# --------------------------------------------------------------------------
+#
+# The framebuffer holds one palette index per pixel (LTDC format L8), so
+# every colour the renderer can ever produce has to be close to one of 256
+# entries. They are assembled in groups, each from the colours that group
+# actually produces on screen, with a fixed share of the 256:
+#
+#   greys       background (very dark, finely spaced), panel and title
+#               gradients, ghost over background, white and grey text,
+#               drop shadows: all grey on grey, so exact grey levels
+#   tiles       per piece colour, k-means over the tile's pixels
+#   flash       the brightened tiles of a clearing line, per colour
+#   gold, red,  anti-aliased text edges: the text colour blended over the
+#   green       backgrounds it is drawn on
+#   tint        the game over screen's red over field and tiles
+#   card        the dark card over the tint
+#
+# The renderer still blends in RGB and turns the result back into an index:
+# grey results through GREY_LUT (exact), everything else through a 32k
+# entry table indexed by RGB555.
+
+# Colours the renderer uses (game/render.c), needed here to know what it
+# will blend. Keep in step with the C_* defines there.
+C_GOLD = (240, 200, 90)
+C_RED = (255, 40, 40)
+C_GREEN = (90, 230, 90)
+TINT = (200, 0, 0)           # game over, alpha 128
+TINT_A = 128 / 255
+CARD_A = 190 / 255           # black card on the game over screen
+
+# Share of the palette per group. Sums to 256 with the grey levels.
+K_TILE = 15
+K_FLASH = 6
+K_GOLD = 10
+K_RED = 6
+K_GREEN = 4
+K_TINT = 24
+K_CARD = 8
+
+
+def grey_levels():
+    # Fine where the background lives (it is almost black, 0..30), coarse
+    # in the bright range, where only gradients and text edges fall.
+    levels = list(range(0, 66, 2)) + list(range(72, 255, 8)) + [255]
+    return sorted(set(levels))
+
+
+def kmeans(points, k, iters=40):
+    """Plain Lloyd's k-means, deterministic: starts from points spread
+    evenly over the brightness order."""
+    import numpy as np
+    pts = np.unique(np.asarray(points, dtype=np.float64), axis=0)
+    if len(pts) <= k:
+        return [tuple(int(round(v)) for v in p) for p in pts]
+    order = np.argsort(pts.sum(axis=1))
+    centres = pts[order[np.linspace(0, len(pts) - 1, k).astype(int)]].copy()
+    for _ in range(iters):
+        d = ((pts[:, None, :] - centres[None, :, :]) ** 2).sum(axis=2)
+        lab = d.argmin(axis=1)
+        for j in range(k):
+            sel = pts[lab == j]
+            if len(sel):
+                centres[j] = sel.mean(axis=0)
+    return [tuple(int(round(v)) for v in c) for c in centres]
+
+
+def mix(a, b, t):
+    return tuple(a[i] * (1 - t) + b[i] * t for i in range(3))
+
+
+def build_palette(normal, flash):
+    greys = grey_levels()
+    pal = [(g, g, g) for g in greys]
+
+    tile_px = [list(t.getdata()) for t in normal]
+    for px in tile_px:
+        pal += kmeans(px, K_TILE)
+    for t in flash:
+        pal += kmeans(list(t.getdata()), K_FLASH)
+
+    # Text edges: coverage steps of the colour over the backgrounds the
+    # text sits on (title gradient, panel gradient, game over card).
+    backs = [18, 22, 26, 30, 34, 10, 50, 60, 70, 80]
+    steps = [i / 16 for i in range(1, 17)]
+    pal += kmeans([mix((b, b, b), C_GOLD, s) for b in backs for s in steps], K_GOLD)
+    pal += kmeans([mix((b, b, b), C_RED, s) for b in backs[6:] for s in steps], K_RED)
+    pal += kmeans([mix((b, b, b), C_GREEN, s) for b in backs[6:] for s in steps], K_GREEN)
+
+    # Game over: the red tint over everything the field shows, then the
+    # dark card over the tinted field.
+    field = [(g, g, g) for g in range(0, 40, 2)]
+    for px in tile_px:
+        field += px[::3]
+    tinted = [mix(c, TINT, TINT_A) for c in field]
+    pal += kmeans(tinted, K_TINT)
+    pal += kmeans([mix(c, (0, 0, 0), CARD_A) for c in tinted], K_CARD)
+
+    if len(pal) > 256:
+        sys.exit("palette has %d entries, more than 256" % len(pal))
+    while len(pal) < 256:
+        pal.append((0, 0, 0))
+    return [tuple(max(0, min(255, int(v))) for v in c) for c in pal]
+
+
+def nearest(pal, colours):
+    import numpy as np
+    p = np.asarray(pal, dtype=np.int64)
+    c = np.asarray(colours, dtype=np.int64)
+    out = []
+    for i in range(0, len(c), 4096):
+        d = ((c[i:i + 4096, None, :] - p[None, :, :]) ** 2).sum(axis=2)
+        out.extend(int(v) for v in d.argmin(axis=1))
+    return out
+
+
+def inverse_table(pal):
+    # RGB555 -> index, every cell looked up at its centre.
+    cells = [((r << 3) | 4, (g << 3) | 4, (b << 3) | 4)
+             for r in range(32) for g in range(32) for b in range(32)]
+    return nearest(pal, cells)
+
+
 def c_array_u32(vals, per_line=6):
     lines = []
     for i in range(0, len(vals), per_line):
@@ -172,6 +296,12 @@ def main():
     bg = background(os.path.join(tpl, "basi.png"))
     fontpath = find_font(args.font)
     fonts = [(name, px) + font(fontpath, px) for name, px in FONTS]
+
+    pal = build_palette(normal, flash)
+    grey_lut = nearest(pal, [(g, g, g) for g in range(256)])
+    inv = inverse_table(pal)
+    tile_idx = [nearest(pal, list(t.getdata())) for t in normal]
+    flash_idx = [nearest(pal, list(t.getdata())) for t in flash]
 
     h = []
     h.append("/* Generated by tools/gen_assets.py, do not edit. */")
@@ -204,9 +334,17 @@ def main():
     h.append("#define ASSET_FONT_FIRST  %d" % FIRST_CHAR)
     h.append("#define ASSET_FONT_LAST   %d" % LAST_CHAR)
     h.append("")
-    h.append("/* ARGB8888, index 0..6 = colour 1..7 of the game (I J L O S T Z). */")
-    h.append("extern const uint32_t asset_tile[7][ASSET_TILE * ASSET_TILE];")
-    h.append("extern const uint32_t asset_tile_flash[7][ASSET_TILE * ASSET_TILE];")
+    h.append("/* The 256 colour palette, 0x00RRGGBB, as the LTDC's CLUT takes it. */")
+    h.append("extern const uint32_t asset_pal[256];")
+    h.append("/* Palette index of the entry closest to grey level g. */")
+    h.append("extern const uint8_t  asset_grey[256];")
+    h.append("/* Palette index closest to a colour, by its RGB555 value")
+    h.append(" * (r >> 3 << 10 | g >> 3 << 5 | b >> 3). */")
+    h.append("extern const uint8_t  asset_inv[32768];")
+    h.append("")
+    h.append("/* Palette indices, index 0..6 = colour 1..7 of the game (I J L O S T Z). */")
+    h.append("extern const uint8_t  asset_tile[7][ASSET_TILE * ASSET_TILE];")
+    h.append("extern const uint8_t  asset_tile_flash[7][ASSET_TILE * ASSET_TILE];")
     h.append("/* Grey level per pixel, blended over the field with a variable alpha. */")
     h.append("extern const uint8_t  asset_tile_ghost[ASSET_TILE * ASSET_TILE];")
     h.append("/* Grey level per pixel of the whole 10x22 tile field. */")
@@ -224,17 +362,29 @@ def main():
     c.append(" * Bold (Bitstream Vera license, see the DejaVu project). */")
     c.append('#include "assets.h"')
     c.append("")
-    c.append("const uint32_t asset_tile[7][ASSET_TILE * ASSET_TILE] = {")
-    for t in normal:
+    c.append("const uint32_t asset_pal[256] = {")
+    c.append(c_array_u32([argb(p) & 0xFFFFFF for p in pal]))
+    c.append("};")
+    c.append("")
+    c.append("const uint8_t asset_grey[256] = {")
+    c.append(c_array_u8(grey_lut))
+    c.append("};")
+    c.append("")
+    c.append("const uint8_t asset_inv[32768] = {")
+    c.append(c_array_u8(inv, 32))
+    c.append("};")
+    c.append("")
+    c.append("const uint8_t asset_tile[7][ASSET_TILE * ASSET_TILE] = {")
+    for t in tile_idx:
         c.append("  {")
-        c.append(c_array_u32([argb(p) for p in t.getdata()]))
+        c.append(c_array_u8(t, 15))
         c.append("  },")
     c.append("};")
     c.append("")
-    c.append("const uint32_t asset_tile_flash[7][ASSET_TILE * ASSET_TILE] = {")
-    for t in flash:
+    c.append("const uint8_t asset_tile_flash[7][ASSET_TILE * ASSET_TILE] = {")
+    for t in flash_idx:
         c.append("  {")
-        c.append(c_array_u32([argb(p) for p in t.getdata()]))
+        c.append(c_array_u8(t, 15))
         c.append("  },")
     c.append("};")
     c.append("")

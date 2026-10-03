@@ -16,7 +16,8 @@
  * while nothing reads the touch panel. */
 extern I2C_HandleTypeDef hi2c3;
 
-/* 180 MHz from the 8 MHz HSE, over-drive on. Runs before anything else. */
+/* Core clock from the 8 MHz HSE, CPU_MHZ (periph.c). Runs before anything
+ * else. */
 void periph_clock_config(void);
 
 /* LEDs, the gyro chip select and I2C3. */

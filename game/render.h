@@ -1,9 +1,10 @@
 #ifndef TETRIS_RENDER_H
 #define TETRIS_RENDER_H
 /*
- * Draws one complete frame of the game into an ARGB8888 framebuffer of
- * RENDER_W x RENDER_H pixels (the 240x320 portrait panel of the
- * STM32F429I-DISC1).
+ * Draws one complete frame of the game into a framebuffer of RENDER_W x
+ * RENDER_H pixels (the 240x320 portrait panel of the STM32F429I-DISC1),
+ * one byte per pixel: an index into the 256 colour palette asset_pal
+ * (assets.h), which the LTDC turns into colours in hardware (format L8).
  *
  * Only what differs from what the buffer already shows is drawn. That
  * memory lives in a render_cache_t, one per framebuffer: with double
@@ -57,7 +58,7 @@ void render_invalidate(render_cache_t *cache);
 
 /* Draws the frame into fb, which cache describes. cache NULL draws every
  * pixel. */
-void render_frame(uint32_t *fb, render_cache_t *cache, const tetris_t *t,
+void render_frame(uint8_t *fb, render_cache_t *cache, const tetris_t *t,
                   const render_info_t *info);
 
 #endif /* TETRIS_RENDER_H */

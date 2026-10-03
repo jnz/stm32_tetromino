@@ -55,6 +55,16 @@ make shots           # renders frames and game over screens to build/shots
   data, and `make flash` does not erase bank 2. A save happens at every game
   over and every 20 min while a game is ahead of the record. An erase happens
   once per 512 saves.
+- **256 colours, no SDRAM.** The framebuffers hold one palette index per
+  pixel (LTDC format L8), the LTDC turns them into colours through a 256
+  entry CLUT. That makes a frame 75 KB, so both buffers fit into the
+  internal SRAM, and everything else (variables, stack) moves to the CCM.
+  The SDRAM is never initialised and is held in power-down. The palette is
+  built by `tools/gen_assets.py` from the colours the renderer produces,
+  blending still happens in RGB and maps back through lookup tables.
+- **Partial redraw.** Each framebuffer has a cache of what it shows, a frame
+  only draws the cells and values that differ. `make test` checks every
+  partial frame pixel by pixel against a full one.
 - **Unattended.** Independent watchdog (~4 s), faults reset the board.
 - **LEDs.** Green LD3 blinks once per cleared line (four times for a
   tetromino clear). Red LD4 blinks 6 times when the running game overtakes
@@ -70,12 +80,13 @@ mode=HOTPLUG` attaches without a reset. It keeps the core clocked in sleep,
 so it is not the default. Flashing works either way. Useful symbols
 (addresses from `arm-none-eabi-nm firmware.elf`):
 
-- `g_timing`: worst game step and frame in CPU cycles (180 per us). Measured
-  on the board: AI step about 15 ms, frame 8.5 ms, against a 50 ms tick.
+- `g_timing`: worst game step and frame, and the last frame, in CPU cycles
+  (`CPU_MHZ` per us).
 - `g_touch`: last touch state (present, pressed, x, y, presses), only with
   `TOUCH=1`.
-- The visible frame: `-u 0xD0000000 0x4B000 fb.bin`, ARGB8888 (layer 0, or
-  `0xD004B000` when the LTDC's layer 2 is the one enabled).
+- The visible frame: `-u 0x20000000 0x12C00 fb.bin` when the LTDC's layer 1
+  is enabled (bit 0 of 0x40016884), else `0x20012C00`. One palette index per
+  pixel, `asset_pal` in `game/assets.c` has the colours.
 
 ## Regenerating the artwork
 

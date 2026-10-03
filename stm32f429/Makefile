@@ -6,6 +6,7 @@
 #   make AI_BLUNDER=n     per mille of random AI moves, 0 = perfect (main.c)
 #   make TOUCH=1          touch control (off by default, not reliable yet)
 #   make LEDS=0           user LEDs off (default: green per line, red records)
+#   make CPU_MHZ=180      core clock, 90 (default) or 180 (periph.c)
 #   make DEBUG=1          debug port stays up in sleep, for attaching to the
 #                         running board (costs most of the WFI saving)
 #   make Q=               show the full command lines
@@ -36,6 +37,7 @@ AI_BLUNDER     ?= 0
 TOUCH          ?= 0
 DEBUG          ?= 0
 LEDS           ?= 1
+CPU_MHZ        ?= 90
 
 APPNAME  := firmware
 OBJDIR   := build
@@ -47,7 +49,7 @@ LINKER_SCRIPT := STM32F429ZITX_FLASH.ld
 
 APP_CPP_FLAGS += -DUSE_HAL_DRIVER -DSTM32F4xx -DSTM32F429xx
 APP_CPP_FLAGS += -DUSE_STM32F429I_DISCOVERY_REVD
-APP_CPP_FLAGS += -DDISPLAY_ROTATE_180=$(ROTATE) -DAI_BLUNDER=$(AI_BLUNDER) -DTETRIS_TOUCH=$(TOUCH) -DTETRIS_DEBUG=$(DEBUG) -DTETRIS_LEDS=$(LEDS)
+APP_CPP_FLAGS += -DDISPLAY_ROTATE_180=$(ROTATE) -DAI_BLUNDER=$(AI_BLUNDER) -DTETRIS_TOUCH=$(TOUCH) -DTETRIS_DEBUG=$(DEBUG) -DTETRIS_LEDS=$(LEDS) -DCPU_MHZ=$(CPU_MHZ)
 APP_CPP_FLAGS += -fno-strict-aliasing -fno-math-errno
 # Debug information lives in the ELF only, objcopy strips it from the
 # .bin/.hex that gets flashed.

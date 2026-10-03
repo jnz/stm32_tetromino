@@ -36,8 +36,22 @@
 /* Entry Point */
 ENTRY(Reset_Handler)
 
+/* Memory split, because the framebuffers live in internal SRAM now (no
+   SDRAM, see display.c):
+
+     RAM     (192K)  the two 240x320 L8 framebuffers, 150K, in .framebuffer.
+                     The LTDC reads them over the bus matrix, so they have
+                     to be here: the CCM is wired to the CPU only.
+     CCMRAM  (64K)   everything else, .data, .bss, heap and stack. Nothing
+                     in this firmware reads memory by DMA, so all of it may
+                     sit where only the CPU sees it, and the CPU sees the
+                     CCM without wait states.
+
+   The startup code copies .data and clears .bss by the symbols below,
+   wherever they are, and the CCM is clocked out of reset. */
+
 /* Highest address of the user mode stack */
-_estack = ORIGIN(RAM) + LENGTH(RAM); /* end of "RAM" Ram type memory */
+_estack = ORIGIN(CCMRAM) + LENGTH(CCMRAM);
 
 _Min_Heap_Size = 0x200; /* required amount of heap */
 /* Stack: the deepest user is the AI search with two 220 byte map copies,
@@ -142,7 +156,7 @@ SECTIONS
   /* Used by the startup to initialize data */
   _sidata = LOADADDR(.data);
 
-  /* Initialized data sections into "RAM" Ram type memory */
+  /* Initialized data sections into "CCMRAM" */
   .data :
   {
     . = ALIGN(4);
@@ -155,28 +169,9 @@ SECTIONS
     . = ALIGN(4);
     _edata = .;        /* define a global symbol at data end */
 
-  } >RAM AT> FLASH
-
-  _siccmram = LOADADDR(.ccmram);
-
-  /* CCM-RAM section
-  *
-  * IMPORTANT NOTE!
-  * If initialized variables will be placed in this section,
-  * the startup code needs to be modified to copy the init-values.
-  */
-  .ccmram :
-  {
-    . = ALIGN(4);
-    _sccmram = .;       /* create a global symbol at ccmram start */
-    *(.ccmram)
-    *(.ccmram*)
-
-    . = ALIGN(4);
-    _eccmram = .;       /* create a global symbol at ccmram end */
   } >CCMRAM AT> FLASH
 
-  /* Uninitialized data section into "RAM" Ram type memory */
+  /* Uninitialized data section into "CCMRAM" */
   . = ALIGN(4);
   .bss :
   {
@@ -190,9 +185,9 @@ SECTIONS
     . = ALIGN(4);
     _ebss = .;         /* define a global symbol at bss end */
     __bss_end__ = _ebss;
-  } >RAM
+  } >CCMRAM
 
-  /* User_heap_stack section, used to check that there is enough "RAM" Ram  type memory left */
+  /* User_heap_stack section, used to check that there is enough CCM left */
   ._user_heap_stack :
   {
     . = ALIGN(8);
@@ -201,6 +196,15 @@ SECTIONS
     . = . + _Min_Heap_Size;
     . = . + _Min_Stack_Size;
     . = ALIGN(8);
+  } >CCMRAM
+
+  /* The framebuffers, in SRAM for the LTDC. Not cleared by the startup:
+     display_init() fills them before the panel shows anything. */
+  .framebuffer (NOLOAD) :
+  {
+    . = ALIGN(4);
+    *(.framebuffer)
+    *(.framebuffer*)
   } >RAM
 
   /* Remove information from the compiler libraries */

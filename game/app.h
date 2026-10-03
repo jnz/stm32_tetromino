@@ -114,9 +114,10 @@ void app_tick(app_t *a, uint32_t now_ms);
  * game step, so call this on every main loop pass, not only per step. */
 uint32_t app_leds(const app_t *a, uint32_t now_ms);
 
-/* Draws the current state into a RENDER_W x RENDER_H ARGB8888 buffer.
+/* Draws the current state into a RENDER_W x RENDER_H buffer of palette
+ * indices (render.h).
  * cache describes what fb shows (render.h), one per framebuffer. NULL
  * draws every pixel. */
-void app_render(const app_t *a, uint32_t *fb, render_cache_t *cache);
+void app_render(const app_t *a, uint8_t *fb, render_cache_t *cache);
 
 #endif /* TETRIS_APP_H */

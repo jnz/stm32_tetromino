@@ -18,11 +18,12 @@
 #include "app.h"
 #include "render.h"
 #include "flash_ram.h"
+#include "assets.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-static uint32_t s_fb[RENDER_W * RENDER_H];
+static uint8_t s_fb[RENDER_W * RENDER_H];
 
 static void write_ppm(const char *dir, const char *name, uint32_t n)
 {
@@ -38,8 +39,9 @@ static void write_ppm(const char *dir, const char *name, uint32_t n)
     }
     fprintf(f, "P6\n%d %d\n255\n", RENDER_W, RENDER_H);
     for (i = 0; i < RENDER_W * RENDER_H; i++) {
-        const uint8_t rgb[3] = { (uint8_t)(s_fb[i] >> 16), (uint8_t)(s_fb[i] >> 8),
-                                 (uint8_t)s_fb[i] };
+        /* through the palette, as the LTDC does it */
+        const uint32_t c = asset_pal[s_fb[i]];
+        const uint8_t rgb[3] = { (uint8_t)(c >> 16), (uint8_t)(c >> 8), (uint8_t)c };
         fwrite(rgb, 1, 3, f);
     }
     fclose(f);

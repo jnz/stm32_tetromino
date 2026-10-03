@@ -8,6 +8,7 @@
 #include "render.h"
 #include "tetris.h"
 #include "flash_ram.h"
+#include "assets.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -550,8 +551,8 @@ static void scenario_leds(void)
  * level ups, line flashes and a touch takeover with its hint overlay. */
 static void scenario_partial_render_matches_full(void)
 {
-    static uint32_t fb[2][RENDER_W * RENDER_H];
-    static uint32_t ref[RENDER_W * RENDER_H];
+    static uint8_t fb[2][RENDER_W * RENDER_H];
+    static uint8_t ref[RENDER_W * RENDER_H];
     static render_cache_t cache[2];
     static app_t a;
     uint32_t now = 0;
@@ -603,23 +604,22 @@ static void scenario_partial_render_matches_full(void)
 
 static void scenario_render_smoke(void)
 {
-    static uint32_t fb[RENDER_W * RENDER_H];
+    static uint8_t fb[RENDER_W * RENDER_H];
+    static uint8_t fb2[RENDER_W * RENDER_H];
     static app_t a;
     uint32_t i;
 
     flash_ram_reset(0xFF);
     app_init(&a, 5U, 50U, 0U);
-    memset(fb, 0, sizeof fb);
+    /* Every pixel written: two buffers that start out different end up
+     * the same. */
+    memset(fb, 0x00, sizeof fb);
+    memset(fb2, 0xFF, sizeof fb2);
     app_render(&a, fb, NULL);
-    /* Every pixel written and opaque. */
-    for (i = 0; i < RENDER_W * RENDER_H; i++) {
-        if ((fb[i] >> 24) != 0xFFU) {
-            CHECK((fb[i] >> 24) == 0xFFU);
-            break;
-        }
-    }
+    app_render(&a, fb2, NULL);
+    CHECK(memcmp(fb, fb2, sizeof fb) == 0);
     /* Title bar gradient starts at grey 50. */
-    CHECK(fb[0] == 0xFF323232U);
+    CHECK(fb[0] == asset_grey[50]);
 
     /* The largest score fits the panel: the separator to the playfield
      * stays untouched next to every value row. */
@@ -627,12 +627,17 @@ static void scenario_render_smoke(void)
     a.game.lines = 0xFFFFFFFFU;
     app_render(&a, fb, NULL);
     for (i = 120; i < 245; i++)
-        CHECK(fb[i * RENDER_W + RENDER_FIELD_W] == 0xFF505050U);
+        CHECK(fb[i * RENDER_W + RENDER_FIELD_W] == asset_grey[80]);
 
     a.game_over = 1;
     a.new_record = 1;
     app_render(&a, fb, NULL);
-    CHECK((fb[RENDER_W * 300 + 5] & 0x00FF0000U) != 0U);   /* red tint */
+    {
+        /* red tint */
+        const uint32_t c = asset_pal[fb[RENDER_W * 300 + 5]];
+
+        CHECK(((c >> 16) & 0xFFU) > ((c >> 8) & 0xFFU) + 40U);
+    }
 }
 
 int main(void)

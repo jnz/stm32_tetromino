@@ -1,13 +1,17 @@
 #ifndef TETRIS_DISPLAY_H
 #define TETRIS_DISPLAY_H
 /*
- * ILI9341 (240x320) on the LTDC of the STM32F429I-DISC1. Taken from the
+ * ILI9341 (240x320) on the LTDC of the STM32F429I-DISC1. Started from the
  * INSLIB sensor firmware (display.c there).
  *
- * SDRAM, LTDC timings, PLLSAI and the panel register sequence over SPI5
- * come from the ST board support package in Drivers/BSP. This is the thin
- * layer above it: two full frame buffers in SDRAM, drawn into alternately
- * and swapped at vertical blanking.
+ * Two framebuffers of one byte per pixel in internal SRAM, drawn into
+ * alternately and swapped at vertical blanking. A pixel is an index into
+ * the 256 colour palette asset_pal (assets.h), which the LTDC looks up in
+ * hardware (format L8 with CLUT). The board's SDRAM is not used and is
+ * kept in power-down.
+ *
+ * LTDC pins, SPI5 and the panel register sequence come from the ST board
+ * support package in Drivers/BSP.
  */
 #include <stdint.h>
 
@@ -23,12 +27,9 @@
 
 #define DISPLAY_WIDTH    240U
 #define DISPLAY_HEIGHT   320U
-/* ARGB8888, as configured by BSP_LCD_LayerDefaultInit(). */
-#define DISPLAY_BPP      4U
-#define DISPLAY_FB_BYTES (DISPLAY_WIDTH * DISPLAY_HEIGHT * DISPLAY_BPP)
 
-/* Bring up SDRAM + LTDC + panel and both layers. 0 = ok, -1 = BSP init
- * failed, -2 = the SDRAM did not read back what was written. */
+/* Bring up LTDC, panel and both layers. 0 = ok, -1 = clock or LTDC setup
+ * failed, -2 = layer or palette setup failed. */
 int display_init(void);
 
 /* 1 = the back buffer is free to draw into. 0 = the swap scheduled by the
@@ -37,8 +38,8 @@ int display_init(void);
 int display_ready(void);
 
 /* The buffer to draw the next frame into, DISPLAY_WIDTH x DISPLAY_HEIGHT
- * ARGB8888 pixels, row major. Only valid while display_ready(). */
-uint32_t *display_back_buffer(void);
+ * palette indices, row major. Only valid while display_ready(). */
+uint8_t *display_back_buffer(void);
 
 /* 0 or 1, which of the two buffers display_back_buffer() is. Stays with
  * the buffer, so it can index per buffer state (render_cache_t). */

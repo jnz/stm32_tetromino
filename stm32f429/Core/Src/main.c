@@ -40,7 +40,7 @@
 _Static_assert(RENDER_W == DISPLAY_WIDTH && RENDER_H == DISPLAY_HEIGHT,
                "renderer and panel disagree on the frame size");
 
-/* Timing of the main loop in CPU cycles (180 per microsecond), for a look
+/* Timing of the main loop in CPU cycles (CPU_MHZ per microsecond), for a look
  * through the debugger: worst game step (the AI thinks in the first step
  * of every piece), worst frame, and how many of each there were. */
 typedef struct {
