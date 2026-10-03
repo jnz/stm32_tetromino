@@ -18,8 +18,6 @@
 # config.mk next to this file, e.g.
 #
 #	TOOLCHAIN_ROOT=C:/ST/STM32CubeCLT_1.21.0/GNU-tools-for-STM32/bin/
-#
-# Build structure taken from the INSLIB sensor firmware.
 
 -include config.mk
 

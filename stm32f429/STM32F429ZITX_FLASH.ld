@@ -60,9 +60,9 @@ _Min_Stack_Size = 0x4000; /* required amount of stack */
 
 /* Memories definition */
 /* FLASH is capped at bank 1 (1024K of the 2048K the part has) on
-   purpose: bank 2 holds the high score (sectors 14/15, hiscore_flash.c)
-   and possibly the INSLIB configuration (sectors 12/13). An image that
-   outgrew bank 1 fails at link time instead of being erased by a save. */
+   purpose: bank 2 holds the high score (sectors 14/15, hiscore_flash.c).
+   An image that outgrew bank 1 fails at link time instead of being
+   erased by a save. */
 MEMORY
 {
   CCMRAM    (xrw)    : ORIGIN = 0x10000000,   LENGTH = 64K

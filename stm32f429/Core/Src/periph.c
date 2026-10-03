@@ -17,8 +17,7 @@ I2C_HandleTypeDef hi2c3;
  *            each 50 ms step at this clock, and the clock trees and the
  *            core voltage cost power even while the core sleeps.
  *   180 MHz: VCO 360, PLLP 2, PLLQ 8. Voltage scale 1 plus over-drive, 5
- *            wait states. What the INSLIB firmware ran at, because the
- *            BSP's SDRAM timings asked for it; kept for comparison.
+ *            wait states. The maximum of the part, kept for comparison.
  *
  * PLLQ makes 45 MHz in both, the RNG wants at most 48.
  */

@@ -2,9 +2,7 @@
 #define TETRIS_HISCORE_PORT_H
 /*
  * The platform dependent part of the high score store: raw access to the
- * two flash sectors it lives in. Same model as the configuration store of
- * the INSLIB sensor firmware (cfg_port.h there), which is where this was
- * taken from.
+ * two flash sectors it lives in.
  *
  * Offsets are relative to the start of the store, sector n begins at
  * n * HS_SECTOR_SZ. The host simulator and the tests implement this on a

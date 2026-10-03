@@ -10,9 +10,6 @@ STM32F429I-DISC1 with its 240x320 panel. The AI plays, and when it loses, the
 game over screen shows the score next to the all-time best for 8 s before the
 next game starts. The best score and the number of games are kept in flash.
 
-Display, flash and touch code come from the INSLIB sensor firmware for the
-same board.
-
 ```
 game/        platform independent: game core + AI, renderer, high score store,
              ornament flow (app.c), generated artwork (assets.c)
@@ -74,11 +71,8 @@ make flash DEBUG=1               # probe can attach while running, see below
   does not lose. To see game overs, a share of pieces can be placed at random.
 - **High score in flash.** `game/hiscore.c` appends a 32 byte record (CRC32,
   sequence number) per save into a two sector log in bank 2, sectors 14/15
-  at 0x08108000. Sectors 12/13 belong to the INSLIB configuration store, so
-  the board can switch between both firmwares without either losing its
-  data, and `make flash` does not erase bank 2. A save happens at every game
-  over and every 20 min while a game is ahead of the record. An erase happens
-  once per 512 saves.
+  at 0x08108000. A save happens at every game over and every 20 min while a
+  game is ahead of the record. An erase happens once per 512 saves.
 - **256 colours, no SDRAM.** The framebuffers hold one palette index per
   pixel (LTDC format L8), the LTDC turns them into colours through a 256
   entry CLUT. That makes a frame 75 KB, so both buffers fit into the

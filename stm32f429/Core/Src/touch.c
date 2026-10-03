@@ -1,6 +1,5 @@
 /*
- * See touch.h. From the INSLIB sensor firmware, comments trimmed to what
- * matters on this board.
+ * See touch.h.
  */
 #include "touch.h"
 #include "display.h"

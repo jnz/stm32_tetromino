@@ -1,12 +1,10 @@
 /*
- * hiscore_port.h on the internal flash of the STM32F429, after the flash
- * port of the INSLIB configuration store (cfg_flash_stm32.c there).
+ * hiscore_port.h on the internal flash of the STM32F429.
  *
  * The store sits in sectors 14 and 15 of BANK 2 (16 kB each, from
- * 0x08108000). Not 12 and 13: those hold the INSLIB configuration, and
- * this board may well go back and forth between the two firmwares. Each
- * keeps its own data that way. The linker script caps the image at bank 1,
- * so the code can never grow into the store.
+ * 0x08108000). Sectors 12 and 13 are left alone, for whatever else the
+ * board is used for. The linker script caps the image at bank 1, so the
+ * code can never grow into the store.
  *
  * Bank 2 is erased and programmed while the code runs from bank 1, which
  * the dual bank part allows without stalling instruction fetches.

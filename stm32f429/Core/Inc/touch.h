@@ -2,11 +2,8 @@
 #define TETRIS_TOUCH_H
 /*
  * Resistive touch panel of the STM32F429I-DISC1, read through the STMPE811
- * on I2C3. Taken from the INSLIB sensor firmware (touch.c there), where the
- * bus is shared with the baro and the magnetometer. That is why the read is
- * a state machine doing one register transfer per call: here nothing else
- * is on the bus, but the split costs nothing and keeps every pass of the
- * main loop short.
+ * on I2C3. The read is a state machine doing one register transfer per
+ * call, which keeps every pass of the main loop short.
  *
  * Chip bring-up comes from the ST BSP (stmpe811 component) and runs once
  * from init. poll() advances the read by one step, paced at 30 Hz, and

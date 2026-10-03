@@ -1,8 +1,7 @@
 #ifndef TETRIS_DISPLAY_H
 #define TETRIS_DISPLAY_H
 /*
- * ILI9341 (240x320) on the LTDC of the STM32F429I-DISC1. Started from the
- * INSLIB sensor firmware (display.c there).
+ * ILI9341 (240x320) on the LTDC of the STM32F429I-DISC1.
  *
  * Two framebuffers of one byte per pixel in internal SRAM, drawn into
  * alternately and swapped at vertical blanking. A pixel is an index into

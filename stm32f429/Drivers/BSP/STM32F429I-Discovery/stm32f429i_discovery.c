@@ -83,12 +83,10 @@ const uint8_t BUTTON_IRQn[BUTTONn] = {KEY_BUTTON_EXTI_IRQn};
 uint32_t I2cxTimeout = I2Cx_TIMEOUT_MAX; /*<! Value of Timeout when I2C communication fails */  
 uint32_t SpixTimeout = SPIx_TIMEOUT_MAX; /*<! Value of Timeout when SPI communication fails */  
 
-/* INSLIB: I2C3 is not the BSP's to own here. periph.c brings it up at
-   400 kHz on PA8/PC9 and the baro and the magnetometer sit on the same
-   bus, so a second description of the same peripheral would fight with
-   theirs. Binding the BSP name to that handle keeps all of the I2Cx_*
-   helpers below working while I2Cx_Init() finds the bus already out of
-   RESET and leaves it alone -- which is exactly what should happen. */
+/* Changed from ST's version: I2C3 is brought up by periph.c (400 kHz on
+   PA8/PC9), not here. Binding the BSP name to that handle keeps all of
+   the I2Cx_* helpers below working, and I2Cx_Init() finds the bus
+   already out of RESET and leaves it alone. */
 #include "periph.h"
 #define I2cHandle hi2c3
 static SPI_HandleTypeDef SpiHandle;
@@ -607,14 +605,10 @@ static HAL_StatusTypeDef I2Cx_IsDeviceReady(uint16_t DevAddress, uint32_t Trials
   */
 static void I2Cx_Error(void)
 {
-  /* INSLIB: upstream de-initialises and re-initialises the bus here. That
-     is wrong on this board, where I2C3 is shared: a touch controller that
-     stops answering must not take the baro and the magnetometer down with
-     it, and a de-init in the middle of their traffic is worse than the
-     failed transaction it is reacting to. So nothing is done. HAL has
-     already released the handle, the next poll retries on its own, and a
-     bus that is genuinely stuck shows up as those sensors failing too --
-     which is the same recovery story the rest of the firmware has. */
+  /* Changed from ST's version, which de-initialises and re-initialises
+     the bus here. Nothing is done instead: HAL has already released the
+     handle, and the next poll of the touch controller retries on its
+     own. */
 }
 
 /******************************* SPI Routines *********************************/

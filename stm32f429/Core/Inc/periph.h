@@ -5,9 +5,6 @@
  * clock tree, LEDs, I2C3, the hardware random number generator and the
  * independent watchdog. LTDC, FMC/SDRAM, SPI5 and DMA2D belong to the ST
  * board support package (display.c).
- *
- * Taken from the INSLIB sensor firmware, minus
- * everything the sensors needed.
  */
 #include "main.h"
 
