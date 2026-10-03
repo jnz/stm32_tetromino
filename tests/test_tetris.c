@@ -625,6 +625,7 @@ static void scenario_partial_render_matches_full(void)
 
     flash_ram_reset(0xFF);
     app_init(&a, 77U, 300U, now);
+    a.infotext = "zwiener.org";
     memset(fb, 0x5A, sizeof fb);
     memset(cache, 0, sizeof cache);
 
@@ -691,6 +692,19 @@ static void scenario_render_smoke(void)
     app_render(&a, fb, NULL);
     for (i = 120; i < 245; i++)
         CHECK(fb[i * RENDER_W + RENDER_FIELD_W] == asset_grey[80]);
+
+    /* The info text, and one far too long for the panel stays in it. */
+    a.game.score = 0U;
+    a.game.lines = 0U;
+    app_render(&a, fb, NULL);
+    a.infotext = "zwiener.org";
+    app_render(&a, fb2, NULL);
+    CHECK(memcmp(fb, fb2, sizeof fb) != 0);
+    a.infotext = "a very long text that does not fit the panel at all";
+    app_render(&a, fb2, NULL);
+    for (i = 0; i < RENDER_H; i++)
+        CHECK(fb2[i * RENDER_W + RENDER_FIELD_W - 1] == fb[i * RENDER_W + RENDER_FIELD_W - 1]);
+    a.infotext = NULL;
 
     a.game_over = 1;
     a.new_record = 1;

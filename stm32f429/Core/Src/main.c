@@ -31,6 +31,11 @@
 #define TETRIS_TOUCH 0
 #endif
 
+/* A line of text bottom right in the side panel, "make INFOTEXT=..." */
+#ifndef TETRIS_INFOTEXT
+#define TETRIS_INFOTEXT NULL
+#endif
+
 /* Green LED per cleared line, red for records and game overs (app.h).
  * "make LEDS=0" keeps both dark. */
 #ifndef TETRIS_LEDS
@@ -116,6 +121,7 @@ int main(void)
 
     next = HAL_GetTick();
     app_init(&s_app, periph_random() ^ DWT->CYCCNT, AI_BLUNDER, next);
+    s_app.infotext = TETRIS_INFOTEXT;
 
     for (;;) {
         const uint32_t now = HAL_GetTick();

@@ -269,5 +269,6 @@ void app_render(const app_t *a, uint8_t *fb, render_cache_t *cache)
     /* Counted from the game over, so "NEW RECORD!" blinks in step with
      * the red LED (app_leds()). */
     info.anim_ms = a->game_over ? a->now_ms - a->over_since_ms : a->now_ms;
+    info.infotext = a->infotext;
     render_frame(fb, cache, &a->game, &info);
 }

@@ -40,6 +40,7 @@ typedef struct {
     uint8_t  human;          /* a person plays, best_* are the human's */
     uint8_t  hint;           /* show where to touch */
     uint32_t anim_ms;        /* clock for blinking, 0 = start of game over */
+    const char *infotext;    /* bottom right of the panel, NULL = none */
 } render_info_t;
 
 /* What one framebuffer shows, as far as the renderer is concerned. Every

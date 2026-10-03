@@ -329,7 +329,7 @@ static void title_key(uint32_t key[5], const tetris_t *t, const render_info_t *i
 
 static void draw_title_bar(uint8_t *fb, const uint32_t key[5])
 {
-    const char *tag = (key[4] & 1U) ? ((key[4] & 2U) ? "AI>>" : "AI") : "YOU";
+    const char *tag = (key[4] & 1U) ? ((key[4] & 2U) ? "AI>" : "AI") : "YOU";
     const int xmax = RENDER_W - 6 - text_width(&font_big, tag) - 8;
     char buf[24];
     int y;
@@ -542,8 +542,30 @@ static void panel_bg(uint8_t *fb, int y0, int h)
     }
 }
 
-/* What never changes: background, separator, labels, preview frame. */
-static void draw_panel_static(uint8_t *fb)
+/* A line of text in the panel's bottom right corner, the label font.
+ * Cut short if it is wider than the panel, so it cannot run into the
+ * playfield, which is drawn by other rules (partial redraw). */
+static void draw_infotext(uint8_t *fb, const char *s)
+{
+    const int xr = RENDER_W - PANEL_PAD;
+    const int room = PANEL_W - 2 * PANEL_PAD;
+    char buf[32];
+    int n = 0;
+
+    while (s[n] != '\0' && n < (int)sizeof buf - 1) {
+        buf[n] = s[n];
+        buf[n + 1] = '\0';
+        if (text_width(&font_small, buf) > room)
+            break;
+        n++;
+    }
+    buf[n] = '\0';
+    draw_text_right(fb, &font_small, xr, RENDER_H - 16, buf, C_LABEL);
+}
+
+/* What never changes: background, separator, labels, preview frame and
+ * the info text. */
+static void draw_panel_static(uint8_t *fb, const char *infotext)
 {
     const int xl = PANEL_X + PANEL_PAD;
     int i;
@@ -553,6 +575,8 @@ static void draw_panel_static(uint8_t *fb)
     draw_text(fb, &font_small, xl, 24, "NEXT", C_LABEL);
     for (i = 0; i < 5; i++)
         draw_text(fb, &font_small, xl, k_value_y[i] - 12, k_value_label[i], C_LABEL);
+    if (infotext != NULL && infotext[0] != '\0')
+        draw_infotext(fb, infotext);
 }
 
 static void value_keys(uint32_t key[5], const tetris_t *t, const render_info_t *info)
@@ -663,7 +687,7 @@ void render_frame(uint8_t *fb, render_cache_t *cache, const tetris_t *t,
      * below must not decide anything when all is set. */
     all = !cache->valid;
     if (all)
-        draw_panel_static(fb);
+        draw_panel_static(fb, info->infotext);
 
     title_key(key, t, info);
     if (all || memcmp(key, cache->title, sizeof key) != 0) {

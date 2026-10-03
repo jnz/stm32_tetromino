@@ -104,6 +104,8 @@ typedef struct {
     uint8_t   btn_down;        /* button seen pressed at the last call */
     uint8_t   settings_dirty;  /* changed, not saved yet */
     uint32_t  settings_ms;     /* time of the last change */
+    const char *infotext;      /* shown bottom right, NULL = none. Set
+                                * after app_init(), which leaves it alone */
 } app_t;
 
 /* Loads the high score and starts the first game. seed should differ
