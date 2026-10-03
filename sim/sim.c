@@ -117,12 +117,12 @@ int main(int argc, char **argv)
                    app.game.ticks * (TETRIS_TICK_MS / 1000.0) / 60.0,
                    app.new_record ? ", NEW RECORD" : "");
             if (shot_gameover) {
-                app_render(&app, s_fb);
+                app_render(&app, s_fb, NULL);
                 write_ppm(dir, "gameover", app.hs.games);
             }
         }
         if (every != 0 && i % every == 0) {
-            app_render(&app, s_fb);
+            app_render(&app, s_fb, NULL);
             write_ppm(dir, "frame", (uint32_t)i);
         }
     }

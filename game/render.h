@@ -5,9 +5,13 @@
  * RENDER_W x RENDER_H pixels (the 240x320 portrait panel of the
  * STM32F429I-DISC1).
  *
- * Every pixel is written on every call, so the caller can hand in either
- * buffer of a double buffered display without tracking what changed.
- * Platform independent, the host simulator uses the same code.
+ * Only what differs from what the buffer already shows is drawn. That
+ * memory lives in a render_cache_t, one per framebuffer: with double
+ * buffering the buffer about to be drawn holds the frame from two frames
+ * ago, not the last one, so a single "what changed" list would leave stale
+ * pixels in every other frame. Each cache knows its own buffer, which
+ * makes the double buffer correct by construction. Platform independent,
+ * the host simulator uses the same code.
  *
  * Layout:
  *    y   0..19   title bar (the two hidden spawn rows of the browser
@@ -37,6 +41,23 @@ typedef struct {
     uint32_t anim_ms;        /* clock for blinking, 0 = start of game over */
 } render_info_t;
 
-void render_frame(uint32_t *fb, const tetris_t *t, const render_info_t *info);
+/* What one framebuffer shows, as far as the renderer is concerned. Every
+ * region is drawn again when the content it should show differs from the
+ * content recorded here. */
+typedef struct {
+    uint8_t  valid;          /* 0: nothing known, the next frame draws all */
+    int8_t   next;           /* preview piece */
+    uint16_t cell[TETRIS_ROWS - TETRIS_HIDDEN_ROWS][TETRIS_COLS];
+    uint32_t title[5];       /* see title_key() in render.c */
+    uint32_t value[5];       /* score, lines, level, seconds, game number */
+} render_cache_t;
+
+/* Forget what the buffer shows, the next render_frame() draws all of it. */
+void render_invalidate(render_cache_t *cache);
+
+/* Draws the frame into fb, which cache describes. cache NULL draws every
+ * pixel. */
+void render_frame(uint32_t *fb, render_cache_t *cache, const tetris_t *t,
+                  const render_info_t *info);
 
 #endif /* TETRIS_RENDER_H */

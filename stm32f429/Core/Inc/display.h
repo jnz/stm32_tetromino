@@ -40,6 +40,10 @@ int display_ready(void);
  * ARGB8888 pixels, row major. Only valid while display_ready(). */
 uint32_t *display_back_buffer(void);
 
+/* 0 or 1, which of the two buffers display_back_buffer() is. Stays with
+ * the buffer, so it can index per buffer state (render_cache_t). */
+int display_back_index(void);
+
 /* Hand the back buffer to the LTDC and take the other one. Returns
  * immediately, the hardware swaps at the next vertical blanking. */
 void display_present(void);

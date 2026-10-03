@@ -149,6 +149,11 @@ uint32_t *display_back_buffer(void)
     return s_fb[s_back];
 }
 
+int display_back_index(void)
+{
+    return (int)s_back;
+}
+
 void display_present(void)
 {
     /* Both layer changes without reload, then ONE reload, so the swap is

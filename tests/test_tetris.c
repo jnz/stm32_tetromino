@@ -544,6 +544,63 @@ static void scenario_leds(void)
     CHECK(!(app_leds(&a, now + 1000U) & APP_LED_RED));
 }
 
+/* Drawing only what changed must give the same pixels as drawing it all.
+ * Two buffers alternate like the display's, each with its own cache, and
+ * start out as garbage, as the SDRAM does. Several games with game overs,
+ * level ups, line flashes and a touch takeover with its hint overlay. */
+static void scenario_partial_render_matches_full(void)
+{
+    static uint32_t fb[2][RENDER_W * RENDER_H];
+    static uint32_t ref[RENDER_W * RENDER_H];
+    static render_cache_t cache[2];
+    static app_t a;
+    uint32_t now = 0;
+    uint32_t n;
+    int mismatches = 0;
+    int seen_levelup = 0;
+    int seen_flash = 0;
+    int seen_hint = 0;
+
+    flash_ram_reset(0xFF);
+    app_init(&a, 77U, 300U, now);
+    memset(fb, 0x5A, sizeof fb);
+    memset(cache, 0, sizeof cache);
+
+    for (n = 0; n < 12000U; n++) {
+        const int b = (int)(n % 2U);
+
+        now += TETRIS_TICK_MS;
+        if (n == 7000U) {
+            /* a human takes over: hint overlay, then a human game */
+            touch_at(&a, 1, 1, 75, 200, now);
+        } else {
+            touch_at(&a, 0, 0, 0, 0, now);
+        }
+        app_tick(&a, now);
+        seen_levelup |= a.game.levelup_ticks > 0U;
+        seen_flash |= a.game.state == TETRIS_CLEARLINES;
+        seen_hint |= a.human && !a.game_over;
+
+        app_render(&a, fb[b], &cache[b]);
+        app_render(&a, ref, NULL);
+        if (memcmp(fb[b], ref, sizeof ref) != 0) {
+            if (mismatches == 0) {
+                size_t i = 0;
+
+                while (fb[b][i] == ref[i])
+                    i++;
+                printf("  frame %u differs first at x %u y %u\n", (unsigned)n,
+                       (unsigned)(i % RENDER_W), (unsigned)(i / RENDER_W));
+            }
+            mismatches++;
+        }
+    }
+    CHECK(mismatches == 0);
+    /* and the run did cover what it claims to */
+    CHECK(a.hs.games >= 3U);
+    CHECK(seen_levelup && seen_flash && seen_hint);
+}
+
 static void scenario_render_smoke(void)
 {
     static uint32_t fb[RENDER_W * RENDER_H];
@@ -553,7 +610,7 @@ static void scenario_render_smoke(void)
     flash_ram_reset(0xFF);
     app_init(&a, 5U, 50U, 0U);
     memset(fb, 0, sizeof fb);
-    app_render(&a, fb);
+    app_render(&a, fb, NULL);
     /* Every pixel written and opaque. */
     for (i = 0; i < RENDER_W * RENDER_H; i++) {
         if ((fb[i] >> 24) != 0xFFU) {
@@ -568,13 +625,13 @@ static void scenario_render_smoke(void)
      * stays untouched next to every value row. */
     a.game.score = 0xFFFFFFFFU;
     a.game.lines = 0xFFFFFFFFU;
-    app_render(&a, fb);
+    app_render(&a, fb, NULL);
     for (i = 120; i < 245; i++)
         CHECK(fb[i * RENDER_W + RENDER_FIELD_W] == 0xFF505050U);
 
     a.game_over = 1;
     a.new_record = 1;
-    app_render(&a, fb);
+    app_render(&a, fb, NULL);
     CHECK((fb[RENDER_W * 300 + 5] & 0x00FF0000U) != 0U);   /* red tint */
 }
 
@@ -602,6 +659,7 @@ int main(void)
         { "touch_hold_repeats", scenario_touch_hold_repeats },
         { "human_best_separate", scenario_human_best_separate },
         { "leds", scenario_leds },
+        { "partial_render_matches_full", scenario_partial_render_matches_full },
         { "render_smoke", scenario_render_smoke },
     };
     size_t i;

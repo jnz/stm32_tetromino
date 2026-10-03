@@ -46,6 +46,7 @@ _Static_assert(RENDER_W == DISPLAY_WIDTH && RENDER_H == DISPLAY_HEIGHT,
 typedef struct {
     uint32_t tick_max_cyc;
     uint32_t render_max_cyc;
+    uint32_t render_last_cyc;  /* the frame just drawn, usually a partial one */
     uint32_t ticks;
     uint32_t frames;
     uint32_t late_ticks;      /* steps that ran more than a period late */
@@ -59,6 +60,11 @@ volatile touch_state_t g_touch;
 #endif
 
 static app_t s_app;
+
+/* What each of the two framebuffers shows, so a frame only redraws what
+ * changed in the buffer it goes into (render.h). Zero means "unknown", the
+ * first frame into each buffer draws everything. */
+static render_cache_t s_cache[2];
 
 /* "make DEBUG=1": keep the core clocked while it sleeps in __WFI(), so a
  * probe can attach to the running board ("mode=HOTPLUG") to read g_timing
@@ -153,9 +159,11 @@ int main(void)
             const uint32_t t0 = DWT->CYCCNT;
             uint32_t dt;
 
-            app_render(&s_app, display_back_buffer());
+            app_render(&s_app, display_back_buffer(),
+                       &s_cache[display_back_index()]);
             display_present();
             dt = DWT->CYCCNT - t0;
+            g_timing.render_last_cyc = dt;
             if (dt > g_timing.render_max_cyc)
                 g_timing.render_max_cyc = dt;
             g_timing.frames++;

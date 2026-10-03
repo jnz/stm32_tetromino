@@ -207,7 +207,7 @@ void app_tick(app_t *a, uint32_t now_ms)
     }
 }
 
-void app_render(const app_t *a, uint32_t *fb)
+void app_render(const app_t *a, uint32_t *fb, render_cache_t *cache)
 {
     render_info_t info;
 
@@ -225,5 +225,5 @@ void app_render(const app_t *a, uint32_t *fb)
     /* Counted from the game over, so "NEW RECORD!" blinks in step with
      * the red LED (app_leds()). */
     info.anim_ms = a->game_over ? a->now_ms - a->over_since_ms : a->now_ms;
-    render_frame(fb, &a->game, &info);
+    render_frame(fb, cache, &a->game, &info);
 }

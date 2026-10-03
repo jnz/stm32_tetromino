@@ -26,6 +26,7 @@
 #include <stdint.h>
 #include "tetris.h"
 #include "hiscore.h"
+#include "render.h"
 
 /* How long the game over screen stays up. */
 #define APP_GAMEOVER_MS     8000U
@@ -113,7 +114,9 @@ void app_tick(app_t *a, uint32_t now_ms);
  * game step, so call this on every main loop pass, not only per step. */
 uint32_t app_leds(const app_t *a, uint32_t now_ms);
 
-/* Draws the current state into a RENDER_W x RENDER_H ARGB8888 buffer. */
-void app_render(const app_t *a, uint32_t *fb);
+/* Draws the current state into a RENDER_W x RENDER_H ARGB8888 buffer.
+ * cache describes what fb shows (render.h), one per framebuffer. NULL
+ * draws every pixel. */
+void app_render(const app_t *a, uint32_t *fb, render_cache_t *cache);
 
 #endif /* TETRIS_APP_H */
