@@ -27,6 +27,7 @@ cd stm32f429
 make                 # needs TOOLCHAIN_ROOT in stm32f429/config.mk
 make flash           # STM32_Programmer_CLI over the on-board ST-LINK
 make ROTATE=1        # picture turned by 180 degrees (USB cable at the bottom)
+make INFOTEXT=zwiener.org   # a line of text bottom right in the side panel
 ```
 
 Host side, from the repository root (any C11 gcc):
@@ -67,13 +68,9 @@ make shots           # renders frames and game over screens to build/shots
   partial frame pixel by pixel against a full one.
 - **Unattended.** Independent watchdog (~4 s), faults reset the board.
 - **User button** (B1, blue): fast drop on or off, the AI drops each piece
-  as soon as it is in place (`AI>>` in the title bar). A hard drop scores a
+  as soon as it is in place (`AI>` in the title bar). A hard drop scores a
   point per row, so fast games score a little more. Kept in flash, 5 s
   after the last change.
-- **Backlight.** Not under firmware control on this board: LEDA is on the
-  3 V rail and the four cathodes go to ground through 0 ohm resistors
-  R47-R50, the ILI9341's backlight output (BC) is not connected (UM1670
-  Rev 1, figure 16).
 - **LEDs.** Green LD3 blinks once per cleared line (four times for a
   tetromino clear). Red LD4 blinks 6 times when the running game overtakes
   the all-time best, along with "NEW RECORD!" on a record game over, and is
@@ -85,16 +82,7 @@ The core sleeps in `__WFI()` between game steps, which most of the time
 keeps a probe from attaching to the running board. `make DEBUG=1 flash`
 sets `DBGMCU_CR.DBG_SLEEP`, then `STM32_Programmer_CLI -c port=SWD
 mode=HOTPLUG` attaches without a reset. It keeps the core clocked in sleep,
-so it is not the default. Flashing works either way. Useful symbols
-(addresses from `arm-none-eabi-nm firmware.elf`):
-
-- `g_timing`: worst game step and frame, and the last frame, in CPU cycles
-  (`CPU_MHZ` per us).
-- `g_touch`: last touch state (present, pressed, x, y, presses), only with
-  `TOUCH=1`.
-- The visible frame: `-u 0x20000000 0x12C00 fb.bin` when the LTDC's layer 1
-  is enabled (bit 0 of 0x40016884), else `0x20012C00`. One palette index per
-  pixel, `asset_pal` in `game/assets.c` has the colours.
+so it is not the default. Flashing works either way.
 
 ## Regenerating the artwork
 
