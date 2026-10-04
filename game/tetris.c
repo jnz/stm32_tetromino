@@ -317,8 +317,12 @@ enum { AI_THINK = 0, AI_MOVE, AI_IDLE };
  * well clears four lines at once: 1200 points per level instead of 4 x 40
  * for the same lines as singles. Then a clear of four is worth
  * AI_TETRIS_W, one of fewer lines costs per line, every cell in the well
- * column costs, and the well column is left out of the row transitions
- * and the wells. Once the highest of the other columns reaches
+ * column costs, and the well column is left out of the row transitions,
+ * the column transitions and the wells. A gap in it under a cell that
+ * covers the well still counts as a hole: without that, covering the well
+ * cost only the one cell, and the AI did it every 30 pieces or so, then
+ * had to dig the well out again with singles. Once the highest of the
+ * other columns reaches
  * AI_SAFE_HEIGHT, it plays for survival with the plain features. */
 #define AI_WELL_COL     (TETRIS_COLS - 1)
 #ifndef AI_SAFE_HEIGHT
@@ -331,7 +335,7 @@ enum { AI_THINK = 0, AI_MOVE, AI_IDLE };
 #define AI_FEW_LINES_W  5000    /* per line of a 1..3 line clear */
 #endif
 #ifndef AI_WELL_W
-#define AI_WELL_W       10000   /* per cell in the well column   */
+#define AI_WELL_W       5000    /* per cell in the well column   */
 #endif
 
 /* Column range the AI tries for a piece's bounding box. The browser
@@ -530,8 +534,9 @@ static int32_t ai_piece_value(const ai_drop_t *d, int tetris_play)
 /* The part that belongs to the field left behind. Rows above from are
  * known to be empty: each has the two row transitions at the walls and
  * nothing else. With tetris_play, the well column as described at
- * AI_WELL_COL: filled for the row transitions, left out of everything
- * else, and its neighbour does not count as a well either. */
+ * AI_WELL_COL: filled for the row transitions, left out of the column
+ * transitions and the wells (its neighbour does not count as a well
+ * either), but holes under a covered well count. */
 static int32_t ai_field_value(const ai_board_t b, int from, int tetris_play)
 {
     const uint32_t wellbit = tetris_play ? (1U << AI_WELL_COL) : 0U;
@@ -554,7 +559,7 @@ static int32_t ai_field_value(const ai_board_t b, int from, int tetris_play)
 
         rowtrans += popcount16((v ^ (v >> 1)) & ((1U << (TETRIS_COLS + 1)) - 1U));
         coltrans += popcount16((r ^ prev) & cols);
-        holes += popcount16(~r & roof & cols);
+        holes += popcount16(~r & roof & AI_FULL);
         in_well += (r & wellbit) != 0U;
         prev = r;
         roof |= r;
