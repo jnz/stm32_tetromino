@@ -24,7 +24,7 @@ CFLAGS  ?= -std=c11 -O2 -g -Wall -Wextra -Wvla -Wpointer-arith -Wwrite-strings
 CFLAGS  += -Igame -Isim
 
 BUILD   := build
-GAME    := game/tetris.c game/render.c game/assets.c game/hiscore.c game/app.c
+GAME    := game/tetris.c game/render.c game/assets.c game/hiscore.c game/app.c game/fx.c
 HDRS    := $(wildcard game/*.h sim/*.h)
 
 .PHONY: all test sim shots assets clean firmware flash clean-firmware

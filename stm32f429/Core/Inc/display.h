@@ -49,6 +49,19 @@ int display_back_index(void);
  * immediately, the hardware swaps at the next vertical blanking. */
 void display_present(void);
 
+/* The colours for the palette indices, 256 entries 0x00RRGGBB, copied.
+ * NULL = asset_pal. Shown from the next present() on, each layer gets it
+ * as it comes on screen: it costs 256 register writes per present(), so
+ * set it only when it changes. */
+void display_set_palette(const uint32_t pal[256]);
+
+/* The whole picture moved by dx, dy pixels (right, down), each clamped to
+ * +-DISPLAY_SHIFT_MAX, from the next present() on. Moves the layer
+ * window, not the pixels: what is pushed over the edge is not shown, the
+ * strip left on the other side is black. */
+#define DISPLAY_SHIFT_MAX  4
+void display_set_shift(int dx, int dy);
+
 /* Picture turned by 180 degrees (1) or not (0). Writes the panel register
  * over SPI only when it changes. */
 void display_set_rotated(int rotated);

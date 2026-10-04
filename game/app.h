@@ -27,6 +27,7 @@
 #include "tetris.h"
 #include "hiscore.h"
 #include "render.h"
+#include "fx.h"
 
 /* How long the game over screen stays up. */
 #define APP_GAMEOVER_MS     8000U
@@ -105,6 +106,7 @@ typedef struct {
     uint32_t  started_ms;      /* start of this game */
     app_blink_t led_green;
     app_blink_t led_red;
+    fx_t      fx;              /* palette effect of the last line clear */
     uint8_t   fast;            /* fast drop for the AI */
     uint8_t   flipped;         /* picture turned against the build default */
     uint8_t   btn_down;        /* button held since btn_since_ms */
@@ -139,6 +141,9 @@ void app_tick(app_t *a, uint32_t now_ms);
 /* Which LEDs are lit at now_ms, APP_LED_* bits. Blinks are shorter than a
  * game step, so call this on every main loop pass, not only per step. */
 uint32_t app_leds(const app_t *a, uint32_t now_ms);
+
+/* Every line clear also starts a palette effect, in a->fx: fx_palette()
+ * gives the colours to show the frame with, at any time (fx.h). */
 
 /* Draws the current state into a RENDER_W x RENDER_H buffer of palette
  * indices (render.h).

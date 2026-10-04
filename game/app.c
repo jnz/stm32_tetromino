@@ -232,9 +232,11 @@ void app_tick(app_t *a, uint32_t now_ms)
 
         tetris_tick(&a->game);
 
-        if (a->game.lines > lines)
+        if (a->game.lines > lines) {
             blink(&a->led_green, now_ms, 60U, 90U,
                   (uint16_t)(a->game.lines - lines));
+            fx_lines_cleared(&a->fx, (int)(a->game.lines - lines), now_ms);
+        }
         /* The moment this game passes the record, once. Not for the very
          * first game on a fresh board, where any score would do it. */
         if (a->best_before > 0U && score <= a->best_before &&

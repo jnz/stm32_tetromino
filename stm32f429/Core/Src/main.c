@@ -173,6 +173,20 @@ int main(void)
 
             app_render(&s_app, display_back_buffer(),
                        &s_cache[display_back_index()]);
+            {
+                /* The palette while a line clear effect runs, and once
+                 * more after it, back to the plain one. */
+                static uint32_t pal[256];
+                static int fx_was_on;
+                const int fx_on = fx_palette(&s_app.fx, now, pal);
+                int dx, dy;
+
+                if (fx_on || fx_was_on)
+                    display_set_palette(pal);
+                fx_was_on = fx_on;
+                fx_shift(now, &dx, &dy);
+                display_set_shift(dx, dy);
+            }
             display_present();
             dt = DWT->CYCCNT - t0;
             g_timing.render_last_cyc = dt;

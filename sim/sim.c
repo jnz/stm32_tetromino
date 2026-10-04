@@ -27,11 +27,16 @@
 
 static uint8_t s_fb[RENDER_W * RENDER_H];
 
-static void write_ppm(const char *dir, const char *name, uint32_t n)
+/* The frame as the panel shows it at now: through the palette of a running
+ * line clear effect, shifted by the burn in shift (fx.h). */
+static void write_ppm(const char *dir, const char *name, uint32_t n,
+                      const app_t *app, uint32_t now)
 {
     char path[512];
+    uint32_t pal[256];
     FILE *f;
-    int i;
+    int dx, dy;
+    int x, y;
 
     snprintf(path, sizeof path, "%s/%s_%06u.ppm", dir, name, (unsigned)n);
     f = fopen(path, "wb");
@@ -40,11 +45,19 @@ static void write_ppm(const char *dir, const char *name, uint32_t n)
         exit(1);
     }
     fprintf(f, "P6\n%d %d\n255\n", RENDER_W, RENDER_H);
-    for (i = 0; i < RENDER_W * RENDER_H; i++) {
-        /* through the palette, as the LTDC does it */
-        const uint32_t c = asset_pal[s_fb[i]];
-        const uint8_t rgb[3] = { (uint8_t)(c >> 16), (uint8_t)(c >> 8), (uint8_t)c };
-        fwrite(rgb, 1, 3, f);
+    (void)fx_palette(&app->fx, now, pal);
+    fx_shift(now, &dx, &dy);
+    for (y = 0; y < RENDER_H; y++) {
+        for (x = 0; x < RENDER_W; x++) {
+            /* through the palette, as the LTDC does it, black where the
+             * shifted picture leaves the panel uncovered */
+            const int sx = x - dx, sy = y - dy;
+            const uint32_t c = (sx < 0 || sx >= RENDER_W || sy < 0 || sy >= RENDER_H)
+                ? 0U : pal[s_fb[sy * RENDER_W + sx]];
+            const uint8_t rgb[3] = { (uint8_t)(c >> 16), (uint8_t)(c >> 8), (uint8_t)c };
+
+            fwrite(rgb, 1, 3, f);
+        }
     }
     fclose(f);
 }
@@ -126,12 +139,12 @@ int main(int argc, char **argv)
                    app.new_record ? ", NEW RECORD" : "");
             if (shot_gameover) {
                 app_render(&app, s_fb, NULL);
-                write_ppm(dir, "gameover", app.hs.games);
+                write_ppm(dir, "gameover", app.hs.games, &app, now);
             }
         }
         if (every != 0 && i >= start && i % every == 0) {
             app_render(&app, s_fb, NULL);
-            write_ppm(dir, "frame", (uint32_t)i);
+            write_ppm(dir, "frame", (uint32_t)i, &app, now);
         }
     }
 

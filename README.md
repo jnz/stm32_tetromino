@@ -58,6 +58,15 @@ make flash DEBUG=1        # probe can attach while running
   internal SRAM and everything else (variables, stack) is in CCM.
   The SDRAM is not initialised and powered-down.
 - **Partial redraw.** Only redraw changed screen elements.
+- **Line clear effects.** Clearing two or more lines changes the palette
+  for a moment, more the more lines: a warm light-up for two (text turns
+  dark), a fade through the negative for three, a colour cycle for a
+  tetromino clear. Only the LTDC's CLUT changes, the framebuffer is left
+  alone.
+- **Against image retention.** The picture wanders by up to 2 px, one pixel
+  every 2 min, by moving the LTDC layer window. Static edges (labels,
+  separator) spread over a few pixels instead of sitting on the same ones
+  for months.
 - **Watchdog.** Independent watchdog (~4 s) active.
 - **User button** (B1, blue). Short press: fast drop on or off, the AI
   drops each piece as soon as it is in place.

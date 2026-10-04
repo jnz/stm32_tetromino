@@ -26,6 +26,17 @@ static int      s_rotated; /* MADCTL as last written          */
 static uint32_t s_front;   /* layer index currently on screen */
 static uint32_t s_back;    /* layer index we draw into        */
 
+/* Palette and shift as last set, and per layer which of them it has: both
+ * go into the layer that present() is about to show, while it is still
+ * off, and so reach the screen with that frame. Generations, not flags,
+ * because each change has to reach both layers. */
+static uint32_t s_pal[256];
+static uint32_t s_pal_gen;
+static uint32_t s_layer_pal_gen[2];
+static int      s_dx, s_dy;
+static uint32_t s_shift_gen;
+static uint32_t s_layer_shift_gen[2];
+
 static LTDC_Layer_TypeDef *layer(uint32_t i)
 {
     return (i == 0U) ? LTDC_Layer1 : LTDC_Layer2;
@@ -61,7 +72,33 @@ static void clut_write(uint32_t i)
     uint32_t k;
 
     for (k = 0; k < 256U; k++)
-        layer(i)->CLUTWR = (k << 24) | (asset_pal[k] & 0x00FFFFFFU);
+        layer(i)->CLUTWR = (k << 24) | (s_pal[k] & 0x00FFFFFFU);
+    s_layer_pal_gen[i] = s_pal_gen;
+}
+
+/* The layer's window on the panel and where in its framebuffer it starts,
+ * for the picture shifted by s_dx, s_dy. The window loses a column per
+ * pixel of shift and moves over, the LTDC's background (black) fills the
+ * strip it leaves. A shift left or up instead starts that many pixels
+ * into the framebuffer. All of these are shadow registers, taken over at
+ * the next reload. */
+static void window_write(uint32_t i)
+{
+    const uint32_t ahbp = (LTDC->BPCR & LTDC_BPCR_AHBP) >> 16;
+    const uint32_t avbp = LTDC->BPCR & LTDC_BPCR_AVBP;
+    const uint32_t w  = DISPLAY_WIDTH - (uint32_t)(s_dx < 0 ? -s_dx : s_dx);
+    const uint32_t h  = DISPLAY_HEIGHT - (uint32_t)(s_dy < 0 ? -s_dy : s_dy);
+    const uint32_t x0 = (s_dx > 0) ? (uint32_t)s_dx : 0U;
+    const uint32_t y0 = (s_dy > 0) ? (uint32_t)s_dy : 0U;
+    const uint32_t sx = (s_dx < 0) ? (uint32_t)-s_dx : 0U;
+    const uint32_t sy = (s_dy < 0) ? (uint32_t)-s_dy : 0U;
+
+    layer(i)->WHPCR  = (ahbp + x0 + 1U) | ((ahbp + x0 + w) << 16);
+    layer(i)->WVPCR  = (avbp + y0 + 1U) | ((avbp + y0 + h) << 16);
+    layer(i)->CFBAR  = (uint32_t)&s_fb[i][sy * DISPLAY_WIDTH + sx];
+    layer(i)->CFBLR  = (DISPLAY_WIDTH << 16) | (w + 3U);   /* pitch, length */
+    layer(i)->CFBLNR = h;
+    s_layer_shift_gen[i] = s_shift_gen;
 }
 
 static int layer_init(uint32_t i)
@@ -103,6 +140,8 @@ int display_init(void)
     RCC_PeriphCLKInitTypeDef clk = {0};
 
     sdram_sleep();
+
+    memcpy(s_pal, asset_pal, sizeof s_pal);
 
     /* Black in both buffers before anything is shown. */
     memset(s_fb, asset_grey[0], sizeof s_fb);
@@ -195,8 +234,34 @@ int display_rotated(void)
     return s_rotated;
 }
 
+void display_set_palette(const uint32_t pal[256])
+{
+    memcpy(s_pal, (pal != NULL) ? pal : asset_pal, sizeof s_pal);
+    s_pal_gen++;
+}
+
+void display_set_shift(int dx, int dy)
+{
+    if (dx < -DISPLAY_SHIFT_MAX) dx = -DISPLAY_SHIFT_MAX;
+    if (dx >  DISPLAY_SHIFT_MAX) dx =  DISPLAY_SHIFT_MAX;
+    if (dy < -DISPLAY_SHIFT_MAX) dy = -DISPLAY_SHIFT_MAX;
+    if (dy >  DISPLAY_SHIFT_MAX) dy =  DISPLAY_SHIFT_MAX;
+    if (dx == s_dx && dy == s_dy)
+        return;
+    s_dx = dx;
+    s_dy = dy;
+    s_shift_gen++;
+}
+
 void display_present(void)
 {
+    /* The layer about to be shown is off until the reload below (present()
+     * only runs once display_ready()), so its CLUT may be written now. */
+    if (s_layer_pal_gen[s_back] != s_pal_gen)
+        clut_write(s_back);
+    if (s_layer_shift_gen[s_back] != s_shift_gen)
+        window_write(s_back);
+
     /* Both layer changes, then ONE reload at vertical blanking: the swap
      * is atomic and there is no frame with both layers off. */
     layer(s_front)->CR &= ~LTDC_LxCR_LEN;
