@@ -115,7 +115,7 @@ static void scenario_score_saturates(void)
     int c, n;
 
     empty_game(&t);
-    t.score = 0xFFFFFFFFU - 10U;
+    t.score = UINT64_MAX - 10U;
     for (c = 4; c < TETRIS_COLS; c++)
         t.map[TETRIS_ROWS - 1][c] = 2;
     t.block = 0;
@@ -127,7 +127,7 @@ static void scenario_score_saturates(void)
         tetris_tick(&t);
     }
     CHECK(t.lines == 1U);
-    CHECK(t.score == 0xFFFFFFFFU);
+    CHECK(t.score == UINT64_MAX);
 }
 
 static void scenario_hard_drop_adds_distance(void)
@@ -142,7 +142,7 @@ static void scenario_hard_drop_adds_distance(void)
     t.frame = 1;      /* no gravity in this tick */
     t.keys.warp_down = 1;
     tetris_tick(&t);
-    CHECK(t.score == (uint32_t)(TETRIS_ROWS - 2));
+    CHECK(t.score == (uint64_t)(TETRIS_ROWS - 2));
     CHECK(t.warpcount == 1U);
 }
 
@@ -267,7 +267,7 @@ static void scenario_hiscore_rotates_sectors(void)
 {
     hiscore_t h;
     uint32_t i;
-    const uint32_t saves = 2U * (HS_SECTOR_SZ / 32U) + 100U;
+    const uint32_t saves = 2U * (HS_SECTOR_SZ / 64U) + 100U;
 
     flash_ram_reset(0xFF);
     hiscore_load(&h);
@@ -288,6 +288,28 @@ static void scenario_hiscore_rotates_sectors(void)
     CHECK(hiscore_save(&h) == 0);
     hiscore_load(&h);
     CHECK(h.games == saves + 1U);
+}
+
+/* Scores past 2^32, which a perfect AI reaches within weeks. */
+static void scenario_hiscore_64bit_scores(void)
+{
+    hiscore_t h;
+
+    flash_ram_reset(0xFF);
+    hiscore_load(&h);
+    h.best_score = 0x123456789ABCULL;
+    h.human_best = 0xFFFFFFFFULL + 7U;
+    h.best_lines = 4000000000U;
+    h.best_level = 20U;
+    h.settings = 0xABCDEFU;
+    h.games = 77U;
+    CHECK(hiscore_save(&h) == 0);
+    memset(&h, 0, sizeof h);
+    hiscore_load(&h);
+    CHECK(h.best_score == 0x123456789ABCULL);
+    CHECK(h.human_best == 0xFFFFFFFFULL + 7U);
+    CHECK(h.best_lines == 4000000000U && h.best_level == 20U);
+    CHECK(h.settings == 0xABCDEFU && h.games == 77U);
 }
 
 static void scenario_hiscore_survives_torn_write(void)
@@ -324,7 +346,7 @@ static void scenario_app_records_game_over(void)
     static app_t a;
     uint32_t now = 0;
     uint32_t n;
-    uint32_t score;
+    uint64_t score;
 
     flash_ram_reset(0xFF);
     /* Every piece placed at random: the game is over in a minute or two. */
@@ -771,6 +793,7 @@ int main(void)
         { "ai_reaches_right_wall", scenario_ai_reaches_right_wall },
         { "hiscore_fresh_flash", scenario_hiscore_fresh_flash },
         { "hiscore_rotates_sectors", scenario_hiscore_rotates_sectors },
+        { "hiscore_64bit_scores", scenario_hiscore_64bit_scores },
         { "hiscore_survives_torn_write", scenario_hiscore_survives_torn_write },
         { "app_records_game_over", scenario_app_records_game_over },
         { "touch_takes_over", scenario_touch_takes_over },

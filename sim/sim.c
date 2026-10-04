@@ -116,8 +116,8 @@ int main(int argc, char **argv)
 
     app_init(&app, (uint32_t)seed, (uint16_t)blunder, now);
     app.infotext = infotext;
-    printf("loaded: best %u (%u lines, level %u), %u games\n",
-           (unsigned)app.hs.best_score, (unsigned)app.hs.best_lines,
+    printf("loaded: best %llu (%u lines, level %u), %u games\n",
+           (unsigned long long)app.hs.best_score, (unsigned)app.hs.best_lines,
            (unsigned)app.hs.best_level, (unsigned)app.hs.games);
 
     for (i = 0; i < ticks; i++) {
@@ -132,8 +132,8 @@ int main(int argc, char **argv)
         app_tick(&app, now);
 
         if (app.game_over && !was_over) {
-            printf("game %u over: score %u, lines %u, level %u, %.1f min%s\n",
-                   (unsigned)app.hs.games, (unsigned)app.game.score,
+            printf("game %u over: score %llu, lines %u, level %u, %.1f min%s\n",
+                   (unsigned)app.hs.games, (unsigned long long)app.game.score,
                    (unsigned)app.game.lines, (unsigned)app.game.level,
                    app.game.ticks * (TETRIS_TICK_MS / 1000.0) / 60.0,
                    app.new_record ? ", NEW RECORD" : "");

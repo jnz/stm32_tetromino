@@ -7,9 +7,9 @@
 #   make TOUCH=1          touch control (off by default, not reliable yet)
 #   make LEDS=0           user LEDs off (default: green per line, red records)
 #   make CPU_MHZ=180      core clock, 90 (default) or 180 (periph.c)
-#   make INFOTEXT=zwiener.org
-#                         a line of text bottom right in the side panel. No
-#                         spaces or quotes: it goes into a -D define.
+#   make INFOTEXT=text    the line of text bottom right in the side panel,
+#                         zwiener.org by default, "make INFOTEXT=" for none.
+#                         No spaces or quotes: it goes into a -D define.
 #   make DEBUG=1          debug port stays up in sleep, for attaching to the
 #                         running board (costs most of the WFI saving)
 #   make Q=               show the full command lines
@@ -38,6 +38,7 @@ AI_BLUNDER     ?= 0
 TOUCH          ?= 0
 DEBUG          ?= 0
 LEDS           ?= 1
+INFOTEXT       ?= zwiener.org
 CPU_MHZ        ?= 90
 
 APPNAME  := firmware

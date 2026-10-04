@@ -34,10 +34,10 @@
 
 /* While a game is ahead of the stored best, it is saved this often, so a
  * record game survives a power cut, losing at most this much play. Every
- * save is one 32 byte record, 512 fit a sector. Every 20 minutes, a
+ * save is one 64 byte record, 256 fit a sector. Every 20 minutes, a
  * perfect AI game that never ends erases each of the two sectors every
- * 14 days, and the 10,000 erase cycles the part is rated for last close
- * to 400 years. */
+ * 7 days, and the 10,000 erase cycles the part is rated for last close
+ * to 200 years. */
 #define APP_CHECKPOINT_MS   (20U * 60U * 1000U)
 
 /* Held left/right: first repeat after the delay, then every period. */
@@ -90,7 +90,7 @@ typedef struct {
 typedef struct {
     tetris_t  game;
     hiscore_t hs;              /* as stored */
-    uint32_t  best_before;     /* best score when this game started */
+    uint64_t  best_before;     /* best score when this game started */
     uint32_t  lines_before;    /* ... and its lines */
     uint32_t  rng;             /* seeds the games */
     uint32_t  now_ms;
@@ -134,7 +134,7 @@ void app_button(app_t *a, int pressed, uint32_t now_ms);
 void app_touch(app_t *a, const app_touch_t *tp, uint32_t now_ms);
 
 /* One game step. Call every TETRIS_TICK_MS. May write the flash when a
- * game ends, which blocks for a few ms (and for an erase every 512th
+ * game ends, which blocks for a few ms (and for an erase every 256th
  * save). */
 void app_tick(app_t *a, uint32_t now_ms);
 

@@ -5,19 +5,19 @@
  *
  * The store is a log: every save appends one small record, and the one
  * with the highest sequence number wins on load. Two sectors take turns,
- * a sector is only erased when the log moves into it, so with 32 byte
- * records an erase happens once per 512 saves. A save that is cut short
+ * a sector is only erased when the log moves into it, so with 64 byte
+ * records an erase happens once per 256 saves. A save that is cut short
  * by a power loss leaves a record with a bad checksum, which load skips,
  * so the previous state survives.
  */
 #include <stdint.h>
 
 typedef struct {
-    uint32_t best_score;
+    uint64_t best_score;
     uint32_t best_lines;    /* lines of the best game */
     uint32_t best_level;    /* level the best game ended at, 0..255 */
     uint32_t games;         /* games finished, ever */
-    uint32_t human_best;    /* best score of a human player (touch) */
+    uint64_t human_best;    /* best score of a human player (touch) */
     uint32_t settings;      /* 24 bits the application keeps here (app.c) */
 } hiscore_t;
 

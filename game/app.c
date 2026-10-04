@@ -228,7 +228,7 @@ void app_tick(app_t *a, uint32_t now_ms)
 
     {
         const uint32_t lines = a->game.lines;
-        const uint32_t score = a->game.score;
+        const uint64_t score = a->game.score;
 
         tetris_tick(&a->game);
 

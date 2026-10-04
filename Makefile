@@ -5,7 +5,7 @@
 #   make flash           build and flash over the on-board ST-LINK
 #   make clean-firmware  remove the firmware build
 #   Options on the command line are passed through, e.g.
-#   make flash INFOTEXT=zwiener.org ROTATE=1
+#   make flash ROTATE=1 INFOTEXT=  (no info text)
 #
 # Host (any C11 gcc):
 #   make test            build and run the host tests

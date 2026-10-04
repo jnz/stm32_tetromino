@@ -94,7 +94,7 @@ typedef int8_t map_t[TETRIS_ROWS][TETRIS_COLS];
  * otherwise come round to zero. */
 static void add_score(tetris_t *t, uint32_t points)
 {
-    t->score = (points > 0xFFFFFFFFU - t->score) ? 0xFFFFFFFFU : t->score + points;
+    t->score = (points > UINT64_MAX - t->score) ? UINT64_MAX : t->score + points;
 }
 
 /* --------------------------------------------------------------------- */

@@ -32,7 +32,7 @@
 
 /* What the frame shows besides the game itself. */
 typedef struct {
-    uint32_t best_score;     /* all-time high score, not counting this game */
+    uint64_t best_score;     /* all-time high score, not counting this game */
     uint32_t best_lines;     /* not shown for a human */
     uint32_t games;          /* games finished, ever */
     uint8_t  game_over;      /* show the game over screen */
@@ -50,8 +50,8 @@ typedef struct {
     uint8_t  valid;          /* 0: nothing known, the next frame draws all */
     int8_t   next;           /* preview piece */
     uint16_t cell[TETRIS_ROWS - TETRIS_HIDDEN_ROWS][TETRIS_COLS];
-    uint32_t title[5];       /* see title_key() in render.c */
-    uint32_t value[5];       /* score, lines, level, seconds, game number */
+    uint64_t title[5];       /* see title_key() in render.c */
+    uint64_t value[5];       /* score, lines, level, seconds, game number */
 } render_cache_t;
 
 /* Forget what the buffer shows, the next render_frame() draws all of it. */

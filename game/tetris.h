@@ -60,7 +60,7 @@ typedef struct {
     uint8_t  speed;         /* ticks per gravity step */
     int8_t   clearflashcount;
 
-    uint32_t score;
+    uint64_t score;         /* 64 bit: a perfect AI passes 2^32 within weeks */
     uint32_t lines;
     uint32_t level;         /* 1..TETRIS_MAX_LEVEL */
     uint32_t linestat[4];   /* single, double, triple, tetromino clears */

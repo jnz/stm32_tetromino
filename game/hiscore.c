@@ -1,24 +1,28 @@
 /*
  * See hiscore.h.
  *
- * One record, 8 little endian words:
- *    0  magic 'TTR1'
+ * One record, 16 little endian words:
+ *    0  magic 'TTR2'
  *    1  sequence number, starts at 1
- *    2  best score
- *    3  best lines
- *    4  best level in bits 0..7, settings in bits 8..31 (0 in records
- *       from before there were settings, which is what the defaults are)
- *    5  games
- *    6  best score of a human player (0 in records from before touch
- *       control, which kept this word reserved at 0)
- *    7  CRC-32 over words 0..6
+ *    2  best score, low word
+ *    3  best score, high word
+ *    4  best lines
+ *    5  best level in bits 0..7, settings in bits 8..31
+ *    6  games
+ *    7  best score of a human player, low word
+ *    8  best score of a human player, high word
+ *    9..14  reserved, 0
+ *   15  CRC-32 over words 0..14
+ *
+ * Records of the first format ('TTR1', 32 bit scores) are not read: the
+ * first save after an update starts the log afresh.
  */
 #include "hiscore.h"
 #include "hiscore_port.h"
 #include <string.h>
 
-#define HS_MAGIC     0x31525454U          /* 'T' 'T' 'R' '1' */
-#define HS_WORDS     8U
+#define HS_MAGIC     0x32525454U          /* 'T' 'T' 'R' '2' */
+#define HS_WORDS     16U
 #define HS_REC_SZ    (HS_WORDS * 4U)
 #define HS_TOTAL     (HS_SECTORS * HS_SECTOR_SZ)
 #define HS_SLOTS     (HS_TOTAL / HS_REC_SZ)
@@ -46,11 +50,6 @@ static uint32_t crc32(const uint32_t *w, uint32_t nwords)
     return ~crc;
 }
 
-static int record_valid(const uint32_t *r)
-{
-    return r[0] == HS_MAGIC && r[7] == crc32(r, 7U);
-}
-
 static int slot_erased(const uint32_t *r)
 {
     uint32_t i;
@@ -60,6 +59,16 @@ static int slot_erased(const uint32_t *r)
             return 0;
     }
     return 1;
+}
+
+static int record_valid(const uint32_t *r)
+{
+    return r[0] == HS_MAGIC && r[HS_WORDS - 1U] == crc32(r, HS_WORDS - 1U);
+}
+
+static uint64_t u64(uint32_t lo, uint32_t hi)
+{
+    return ((uint64_t)hi << 32) | lo;
 }
 
 void hiscore_load(hiscore_t *out)
@@ -78,12 +87,12 @@ void hiscore_load(hiscore_t *out)
         if (r[1] > s_seq) {
             s_seq = r[1];
             best_off = off;
-            out->best_score = r[2];
-            out->best_lines = r[3];
-            out->best_level = r[4] & 0xFFU;
-            out->settings   = r[4] >> 8;
-            out->games      = r[5];
-            out->human_best = r[6];
+            out->best_score = u64(r[2], r[3]);
+            out->best_lines = r[4];
+            out->best_level = r[5] & 0xFFU;
+            out->settings   = r[5] >> 8;
+            out->games      = r[6];
+            out->human_best = u64(r[7], r[8]);
         }
     }
 
@@ -100,14 +109,17 @@ int hiscore_save(const hiscore_t *hs)
     uint32_t back[HS_WORDS];
     uint32_t tries;
 
+    memset(rec, 0, sizeof rec);
     rec[0] = HS_MAGIC;
     rec[1] = s_seq + 1U;
-    rec[2] = hs->best_score;
-    rec[3] = hs->best_lines;
-    rec[4] = (hs->best_level & 0xFFU) | (hs->settings << 8);
-    rec[5] = hs->games;
-    rec[6] = hs->human_best;
-    rec[7] = crc32(rec, 7U);
+    rec[2] = (uint32_t)hs->best_score;
+    rec[3] = (uint32_t)(hs->best_score >> 32);
+    rec[4] = hs->best_lines;
+    rec[5] = (hs->best_level & 0xFFU) | (hs->settings << 8);
+    rec[6] = hs->games;
+    rec[7] = (uint32_t)hs->human_best;
+    rec[8] = (uint32_t)(hs->human_best >> 32);
+    rec[HS_WORDS - 1U] = crc32(rec, HS_WORDS - 1U);
 
     /* Bounded: at most one pass over every slot. Slots that are neither
      * erased nor take a write (left over from a write that was cut short)

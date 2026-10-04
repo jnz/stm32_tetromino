@@ -58,7 +58,10 @@ make flash DEBUG=1        # probe can attach while running
   playing singles), above that for survival. Placements it cannot reach
   in time at the current speed are skipped.
 - **High score in flash.** A save happens at every game over and every 20 min
-  while a game is ahead of the record. An erase happens once per 512 saves.
+  while a game is ahead of the record. An erase happens once per 256 saves.
+  Scores are 64 bit: the AI passes 2^32 points within weeks. Numbers too
+  wide for their place on screen are shortened to three digits and k, M,
+  G, T, P or E.
 - **256 colours, no SDRAM.** Double buffering, both buffers fit into the
   internal SRAM and everything else (variables, stack) is in CCM.
   The SDRAM is not initialised and powered-down.

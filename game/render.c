@@ -188,10 +188,10 @@ static void draw_text_center(uint8_t *fb, const asset_font_t *f, int xc,
 }
 
 /* Decimal with thousands separators, like toLocaleString() in the browser.
- * buf holds at least 14 characters (4294967295 -> "4,294,967,295"). */
-static const char *fmt_u32(char *buf, uint32_t v)
+ * buf holds at least 27 characters (2^64 - 1 -> "18,446,744,073,709,551,615"). */
+static const char *fmt_num(char *buf, uint64_t v)
 {
-    char tmp[10];
+    char tmp[20];
     int n = 0;
     int i;
     char *p = buf;
@@ -209,68 +209,107 @@ static const char *fmt_u32(char *buf, uint32_t v)
     return buf;
 }
 
-/* "prefix" + number, for the short lines that need both. */
-static const char *fmt_join(char *buf, const char *prefix, uint32_t v,
-                            const char *suffix)
+/* Short form for numbers that do not fit in full: three digits and k, M,
+ * G, T, P or E, truncated ("12,345" -> "12.3k", "2,049,999" -> "2.04M",
+ * "4,294,967,295" -> "4.29G"). Below 10,000 in full. buf holds at least
+ * 8 characters. */
+static const char *fmt_short(char *buf, uint64_t v)
 {
-    char num[14];
+    static const char k_unit[6] = { 'k', 'M', 'G', 'T', 'P', 'E' };
+    uint64_t div = 1000U;
+    uint64_t whole, rem;
+    int u = 0;
     char *p = buf;
+    char num[27];
     const char *s;
 
-    for (s = prefix; *s != '\0'; s++)
+    if (v < 10000U)
+        return fmt_num(buf, v);
+    while (u < 5 && v / div >= 1000U) {
+        div *= 1000U;
+        u++;
+    }
+    whole = v / div;
+    rem = v % div;
+    for (s = fmt_num(num, whole); *s != '\0'; s++)
         *p++ = *s;
-    for (s = fmt_u32(num, v); *s != '\0'; s++)
-        *p++ = *s;
-    for (s = suffix; *s != '\0'; s++)
-        *p++ = *s;
+    if (whole < 100U) {
+        /* The digits after the point that make three in all. */
+        const uint64_t frac = (whole < 10U) ? rem / (div / 100U)
+                                            : rem / (div / 10U);
+
+        *p++ = '.';
+        if (whole < 10U)
+            *p++ = (char)('0' + frac / 10U);
+        *p++ = (char)('0' + frac % 10U);
+    }
+    *p++ = k_unit[u];
     *p = '\0';
     return buf;
+}
+
+/* prefix + s + suffix into buf. */
+static const char *join(char *buf, const char *prefix, const char *s,
+                        const char *suffix)
+{
+    char *p = buf;
+
+    for (; *prefix != '\0'; prefix++)
+        *p++ = *prefix;
+    for (; *s != '\0'; s++)
+        *p++ = *s;
+    for (; *suffix != '\0'; suffix++)
+        *p++ = *suffix;
+    *p = '\0';
+    return buf;
+}
+
+/* "prefix" + number, for the short lines that need both. */
+static const char *fmt_join(char *buf, const char *prefix, uint64_t v,
+                            const char *suffix)
+{
+    char num[27];
+
+    return join(buf, prefix, fmt_num(num, v), suffix);
+}
+
+/* A number with its prefix and suffix as large as fits into w pixels:
+ * in full in the font big, in full in the small font, short in big,
+ * short in small (which then may still be too wide, but no wider than
+ * "BEST 18.4E"). Into buf, at least 48 characters. Returns the font. */
+static const asset_font_t *fit_num(char *buf, const char *prefix, uint64_t v,
+                                   const char *suffix, int w,
+                                   const asset_font_t *big)
+{
+    char num[27];
+
+    join(buf, prefix, fmt_num(num, v), suffix);
+    if (text_width(big, buf) <= w)
+        return big;
+    if (text_width(&font_small, buf) <= w)
+        return &font_small;
+    join(buf, prefix, fmt_short(num, v), suffix);
+    if (text_width(big, buf) <= w)
+        return big;
+    return &font_small;
 }
 
 /* --------------------------------------------------------------------- */
 /* Screen parts                                                          */
 /* --------------------------------------------------------------------- */
 
-/* Short form for numbers that do not fit in full: one decimal and k, M or
- * G, truncated ("2,049,999" -> "2.0M"). */
-static const char *fmt_short(char *buf, uint32_t v)
-{
-    static const char k_unit[3] = { 'k', 'M', 'G' };
-    uint32_t div = 1000U;
-    int u = 0;
-    uint32_t tenths;
-    char *p = buf;
-    char num[14];
-    const char *s;
-
-    if (v < 10000U)
-        return fmt_u32(buf, v);
-    while (u < 2 && v / div >= 1000U) {
-        div *= 1000U;
-        u++;
-    }
-    tenths = (uint32_t)((uint64_t)v * 10U / div);
-    for (s = fmt_u32(num, tenths / 10U); *s != '\0'; s++)
-        *p++ = *s;
-    *p++ = '.';
-    *p++ = (char)('0' + tenths % 10U);
-    *p++ = k_unit[u];
-    *p = '\0';
-    return buf;
-}
-
 /* "BEST <score>" and the lines of that game after it, as large as the
- * space left of the AI/YOU tag allows: score in the big font, then both
- * small, then the lines shortened. Holds for the largest values a uint32_t
- * takes, which a perfect AI running for months could get near. */
-static void draw_title_best(uint8_t *fb, uint32_t score, uint32_t lines,
+ * title bar allows: score in the big font, then both
+ * small, then the lines shortened, then without the lines, then the score
+ * shortened too. */
+static void draw_title_best(uint8_t *fb, uint64_t score, uint32_t lines,
                             int show_lines, int xmax)
 {
     const int x0 = 6;
     const int gap = 6;
-    char sbuf[24];
-    char lbuf[24];
-    char num[14];
+    char sbuf[48];
+    char lbuf[48];
+    char num[27];
     const asset_font_t *sf = &font_big;
     int ws, wl;
 
@@ -284,18 +323,15 @@ static void draw_title_best(uint8_t *fb, uint32_t score, uint32_t lines,
         ws = text_width(sf, sbuf);
     }
     if (show_lines && x0 + ws + wl > xmax) {
-        char *p = lbuf;
-        const char *q;
-
-        for (q = fmt_short(num, lines); *q != '\0'; q++)
-            *p++ = *q;
-        for (q = " lines"; *q != '\0'; q++)
-            *p++ = *q;
-        *p = '\0';
+        join(lbuf, "", fmt_short(num, lines), " lines");
         wl = gap + text_width(&font_small, lbuf);
     }
     if (x0 + ws + wl > xmax)
         show_lines = 0;
+    if (x0 + ws > xmax) {
+        sf = fit_num(sbuf, "BEST ", score, "", xmax - x0, &font_big);
+        ws = text_width(sf, sbuf);
+    }
 
     /* All on the baseline of the big font. */
     draw_text(fb, sf, x0, 3 + font_big.baseline - sf->baseline, sbuf, C_GOLD);
@@ -308,7 +344,7 @@ static void draw_title_best(uint8_t *fb, uint32_t score, uint32_t lines,
  * the bar: mode (0 best score, 1 level up notice), the number, the lines,
  * whether the lines are shown, and the tag: bit 0 AI (else YOU), bit 1
  * fast drop. */
-static void title_key(uint32_t key[5], const tetris_t *t, const render_info_t *info)
+static void title_key(uint64_t key[5], const tetris_t *t, const render_info_t *info)
 {
     /* The best game so far, this one included once it is ahead. */
     const int leading = t->score > info->best_score;
@@ -327,10 +363,9 @@ static void title_key(uint32_t key[5], const tetris_t *t, const render_info_t *i
     key[4] = (t->ai_active ? 1U : 0U) | (t->ai_superfast ? 2U : 0U);
 }
 
-static void draw_title_bar(uint8_t *fb, const uint32_t key[5])
+static void draw_title_bar(uint8_t *fb, const uint64_t key[5])
 {
-    const char *tag = (key[4] & 1U) ? ((key[4] & 2U) ? "AI>" : "AI") : "YOU";
-    const int xmax = RENDER_W - 6 - text_width(&font_big, tag) - 8;
+    const int xmax = RENDER_W - 6;
     char buf[24];
     int y;
 
@@ -345,10 +380,7 @@ static void draw_title_bar(uint8_t *fb, const uint32_t key[5])
         draw_text(fb, &font_big, 6, 3, fmt_join(buf, "Level ", key[1], "!"),
                   C_WHITE);
     else
-        draw_title_best(fb, key[1], key[2], (int)key[3], xmax);
-
-    draw_text_right(fb, &font_big, RENDER_W - 6, 3, tag,
-                    (key[4] & 1U) ? C_RED : C_GREEN);
+        draw_title_best(fb, key[1], (uint32_t)key[2], (int)key[3], xmax);
 }
 
 /* A field cell as a 16 bit key, everything that decides its pixels:
@@ -437,7 +469,7 @@ static void draw_cell(uint8_t *fb, int row, int col, uint16_t key)
 }
 
 /* A value right aligned in the side panel. The big font while it fits,
- * else the small one, which takes even the largest uint32_t. */
+ * else the small one, which takes even the longest game time. */
 static void draw_value_str(uint8_t *fb, int xr, int y, const char *s, uint32_t c)
 {
     const asset_font_t *f = &font_big;
@@ -449,11 +481,16 @@ static void draw_value_str(uint8_t *fb, int xr, int y, const char *s, uint32_t c
     draw_text_right(fb, f, xr, y, s, c);
 }
 
-static void draw_value(uint8_t *fb, int xr, int y, uint32_t v, uint32_t c)
+/* A number right aligned in the side panel, as large as fits (fit_num()):
+ * a perfect AI's score passes 4 billion within weeks. */
+static void draw_value(uint8_t *fb, int xr, int y, const char *prefix,
+                       uint64_t v, uint32_t c)
 {
-    char buf[14];
+    char buf[48];
+    const asset_font_t *f = fit_num(buf, prefix, v, "", xr - PANEL_X - 1,
+                                    &font_big);
 
-    draw_value_str(fb, xr, y, fmt_u32(buf, v), c);
+    draw_text_right(fb, f, xr, y + font_big.baseline - f->baseline, buf, c);
 }
 
 /* Game time as m:ss, or h:mm:ss from the first hour on. Hours are not
@@ -563,6 +600,19 @@ static void draw_infotext(uint8_t *fb, const char *s)
     draw_text_right(fb, &font_small, xr, RENDER_H - 16, buf, C_LABEL);
 }
 
+/* Who plays, bottom right in the panel above the info text: AI (red, "AI>"
+ * with fast drop) or YOU (green). key4 is key[4] of title_key(). */
+#define TAG_Y  (RENDER_H - 38)
+
+static void draw_tag(uint8_t *fb, uint64_t key4)
+{
+    const char *tag = (key4 & 1U) ? ((key4 & 2U) ? "AI>" : "AI") : "YOU";
+
+    panel_bg(fb, TAG_Y, font_big.height + 1);
+    draw_text_right(fb, &font_big, RENDER_W - PANEL_PAD, TAG_Y, tag,
+                    (key4 & 1U) ? C_RED : C_GREEN);
+}
+
 /* What never changes: background, separator, labels, preview frame and
  * the info text. */
 static void draw_panel_static(uint8_t *fb, const char *infotext)
@@ -579,7 +629,7 @@ static void draw_panel_static(uint8_t *fb, const char *infotext)
         draw_infotext(fb, infotext);
 }
 
-static void value_keys(uint32_t key[5], const tetris_t *t, const render_info_t *info)
+static void value_keys(uint64_t key[5], const tetris_t *t, const render_info_t *info)
 {
     key[0] = t->score;
     key[1] = t->lines;
@@ -591,7 +641,7 @@ static void value_keys(uint32_t key[5], const tetris_t *t, const render_info_t *
 /* One panel value over its own strip of background. The strip is one row
  * taller than the big font for the drop shadow, and the small font that
  * takes over for long numbers sits inside it. */
-static void draw_panel_value(uint8_t *fb, int i, uint32_t v)
+static void draw_panel_value(uint8_t *fb, int i, uint64_t v)
 {
     const int xr = RENDER_W - PANEL_PAD;
     char buf[24];
@@ -599,17 +649,28 @@ static void draw_panel_value(uint8_t *fb, int i, uint32_t v)
     panel_bg(fb, k_value_y[i], font_big.height + 1);
     if (i == 3)
         draw_value_str(fb, xr, k_value_y[i],
-                       fmt_time(buf, v * (1000U / TETRIS_TICK_MS)), C_WHITE);
-    else if (i == 4)
-        draw_value_str(fb, xr, k_value_y[i], fmt_join(buf, "#", v, ""), C_WHITE);
+                       fmt_time(buf, (uint32_t)v * (1000U / TETRIS_TICK_MS)),
+                       C_WHITE);
     else
-        draw_value(fb, xr, k_value_y[i], v, C_WHITE);
+        draw_value(fb, xr, k_value_y[i], (i == 4) ? "#" : "", v, C_WHITE);
+}
+
+/* A number centred on the game over card, as large as fits on it. y is
+ * the top of the line in the font big. */
+static void draw_card_num(uint8_t *fb, int y, const char *prefix, uint64_t v,
+                          const char *suffix, const asset_font_t *big,
+                          uint32_t c)
+{
+    char buf[48];
+    const asset_font_t *f = fit_num(buf, prefix, v, suffix, FIELD_W - 12, big);
+
+    draw_text_center(fb, f, FIELD_X + FIELD_W / 2,
+                     y + big->baseline - f->baseline, buf, c);
 }
 
 static void draw_game_over(uint8_t *fb, const tetris_t *t, const render_info_t *info)
 {
     const int xc = FIELD_X + FIELD_W / 2;
-    char buf[24];
 
     blend_rect(fb, FIELD_X, FIELD_Y, FIELD_W, FIELD_H, RGB(200, 0, 0), 128U);
     /* By the time the AI loses, the field is full of tiles. A dark card
@@ -621,7 +682,7 @@ static void draw_game_over(uint8_t *fb, const tetris_t *t, const render_info_t *
     draw_text_center(fb, &font_huge, xc, 100, "GAME OVER", C_WHITE);
 
     draw_text_center(fb, &font_small, xc, 138, "SCORE", C_WHITE);
-    draw_text_center(fb, &font_big, xc, 150, fmt_u32(buf, t->score), C_WHITE);
+    draw_card_num(fb, 150, "", t->score, "", &font_big, C_WHITE);
 
     if (info->new_record) {
         if ((info->anim_ms / 400U) % 2U == 0U)
@@ -629,11 +690,10 @@ static void draw_game_over(uint8_t *fb, const tetris_t *t, const render_info_t *
     } else {
         draw_text_center(fb, &font_small, xc, 180,
                          info->human ? "YOUR BEST" : "ALL-TIME BEST", C_GOLD);
-        draw_text_center(fb, &font_big, xc, 192, fmt_u32(buf, info->best_score),
-                         C_GOLD);
+        draw_card_num(fb, 192, "", info->best_score, "", &font_big, C_GOLD);
         if (!info->human)
-            draw_text_center(fb, &font_small, xc, 210,
-                             fmt_join(buf, "", info->best_lines, " lines"), C_WHITE);
+            draw_card_num(fb, 210, "", info->best_lines, " lines",
+                          &font_small, C_WHITE);
     }
 }
 
@@ -669,7 +729,7 @@ void render_frame(uint8_t *fb, render_cache_t *cache, const tetris_t *t,
     const int overlay = info->hint || info->game_over;
     render_cache_t scratch;
     uint16_t cells[TETRIS_ROWS - TETRIS_HIDDEN_ROWS][TETRIS_COLS];
-    uint32_t key[5];
+    uint64_t key[5];
     int r, c, i;
 
     int all;
@@ -692,6 +752,7 @@ void render_frame(uint8_t *fb, render_cache_t *cache, const tetris_t *t,
     title_key(key, t, info);
     if (all || memcmp(key, cache->title, sizeof key) != 0) {
         draw_title_bar(fb, key);
+        draw_tag(fb, key[4]);
         memcpy(cache->title, key, sizeof key);
     }
 
