@@ -135,6 +135,25 @@ static int check_collision(const map_t map, int block, int rot, int x, int y)
     return 0;
 }
 
+/* The kicks for a rotation from -> to of a piece at (*x, *y): moves it by
+ * the first one that fits. 0 = rotated, 1 = blocked, *x and *y unchanged. */
+static int kick_rotation(const map_t map, int block, int from, int to,
+                         int *x, int *y)
+{
+    const int8_t *kick = (block == 0) ? k_wallkick_i[from][to]
+                                      : k_wallkick[from][to];
+    int i;
+
+    for (i = 0; i < 10; i += 2) {
+        if (!check_collision(map, block, to, *x + kick[i], *y + kick[i + 1])) {
+            *x += kick[i];
+            *y += kick[i + 1];
+            return 0;
+        }
+    }
+    return 1;
+}
+
 static void stamp_block(map_t map, int block, int rot, int x, int y)
 {
     const int n = k_size[block];
@@ -259,23 +278,57 @@ static uint8_t select_random_block(tetris_t *t)
 
 enum { AI_THINK = 0, AI_MOVE, AI_IDLE };
 
-/* Weights from the browser version, which took them from
- * https://codemyroad.wordpress.com/2013/04/14/tetris-ai-the-near-perfect-player/
- * The line weight is the article's 0.760666, the browser version had
- * 0.760066 by a typo.
+/* Evaluation: Pierre Dellacherie's features with the weights El-Tetris
+ * (Islam El-Ashi, 2011) found for them by a genetic algorithm. Per
+ * placement:
+ *   landing    height of the piece's middle above the floor where it
+ *              came to rest
+ *   eroded     lines cleared x cells of the piece in them (a reward)
+ *   row trans  filled/empty changes along each row, the walls filled
+ *   col trans  the same down each column, the floor filled
+ *   holes      empty cells below a column's top
+ *   wells      per run of empty cells with both neighbours filled (or the
+ *              wall), 1 + 2 + .. + its depth
+ * The browser version had four simpler features (height, holes,
+ * bumpiness, lines). Those let the stack fill up with holes it never dug
+ * out of again, once the tetromino play below kept it high.
  *
- * In millionths, so the evaluation is exact integer arithmetic. With
+ * In thousandths, so the evaluation is exact integer arithmetic. With
  * floats, two placements of equal value were decided by the last bit of
  * rounding, which differs between compilers: the host simulator and the
  * board could pick different moves from the same position. Integers tie
  * exactly, and a tie goes to the placement found first, everywhere.
  *
- * Range: at most 220 cells of height or holes and 4 lines, so a score
- * stays within +-3e8, well inside int32_t. */
-#define AI_LINE_W    760666
-#define AI_HEIGHT_W  510066
-#define AI_ROUGH_W   356630
-#define AI_VALLEY_W  184483
+ * Range: every feature stays below 3000 on a 10x22 field, a score within
+ * +-1e8, well inside int32_t. */
+#define AI_LANDING_W   4500
+#define AI_ERODED_W    3418
+#define AI_ROWTRANS_W  3218
+#define AI_COLTRANS_W  9349
+#define AI_HOLES_W     7899
+#define AI_WELLS_W     3386
+
+/* Tetromino play. While the stack is low, the AI keeps the rightmost
+ * column empty as a well and fills the rest, so that an I dropped into the
+ * well clears four lines at once: 1200 points per level instead of 4 x 40
+ * for the same lines as singles. Then a clear of four is worth
+ * AI_TETRIS_W, one of fewer lines costs per line, every cell in the well
+ * column costs, and the well column is left out of the row transitions
+ * and the wells. Once the highest of the other columns reaches
+ * AI_SAFE_HEIGHT, it plays for survival with the plain features. */
+#define AI_WELL_COL     (TETRIS_COLS - 1)
+#ifndef AI_SAFE_HEIGHT
+#define AI_SAFE_HEIGHT  10
+#endif
+#ifndef AI_TETRIS_W
+#define AI_TETRIS_W     50000
+#endif
+#ifndef AI_FEW_LINES_W
+#define AI_FEW_LINES_W  5000    /* per line of a 1..3 line clear */
+#endif
+#ifndef AI_WELL_W
+#define AI_WELL_W       10000   /* per cell in the well column   */
+#endif
 
 /* Column range the AI tries for a piece's bounding box. The browser
  * version used -1 .. COLS-3, which cannot reach the right wall with
@@ -289,98 +342,65 @@ enum { AI_THINK = 0, AI_MOVE, AI_IDLE };
 #define TETRIS_AI_X_MAX  (TETRIS_COLS - 1)
 #endif
 
-static int row_complete(const map_t map, int row)
-{
-    int j;
+/* The AI works on a bitboard: one row per uint16_t, bit j = column j.
+ * Copying a field, finding complete rows and every feature below take a
+ * few operations per row instead of one per cell. With the cell by cell
+ * version, the two ply search took longer than a game tick on the target
+ * (78 ms at 90 MHz). */
+typedef uint16_t ai_board_t[TETRIS_ROWS];
+#define AI_FULL ((uint32_t)((1U << TETRIS_COLS) - 1U))
 
-    for (j = 0; j < TETRIS_COLS; j++) {
-        if (map[row][j] <= 0)
-            return 0;
-    }
-    return 1;
+static int popcount16(uint32_t v)
+{
+    v = v - ((v >> 1) & 0x5555U);
+    v = (v & 0x3333U) + ((v >> 2) & 0x3333U);
+    v = (v + (v >> 4)) & 0x0F0FU;
+    return (int)((v + (v >> 8)) & 0x1FU);
 }
 
-/* ai_removeCompletedLines(), without its slip: the browser version moved
- * on to the next row after a removal, so of two adjacent complete lines it
- * counted and removed only one, and the AI saw a tetromino clear as a
- * single. Here the row that moved in is looked at again.
- *
- * Only rows lo..hi are looked at. The AI stamps a piece into a map that
- * has no complete line, so only the rows the piece covers can complete. */
-static int ai_remove_completed_lines(map_t map, int lo, int hi)
+static void ai_board(const map_t map, ai_board_t b)
 {
-    int count = 0;
-    int i;
-
-    if (lo < 1)
-        lo = 1;
-    if (hi > TETRIS_ROWS - 1)
-        hi = TETRIS_ROWS - 1;
-    for (i = hi; i >= lo; i--) {
-        if (!row_complete(map, i))
-            continue;
-        count++;
-        memmove(&map[1][0], &map[0][0], (size_t)i * TETRIS_COLS);
-        /* Emptying row 0 also bounds the loop below: every removal takes
-         * cells off the map, so the re-check cannot go on forever. */
-        memset(&map[0][0], 0, TETRIS_COLS);
-        i++;    /* the row that moved in has not been looked at yet */
-        lo++;   /* and the rows still to look at moved down with it */
-    }
-    return count;
-}
-
-/* ai_penaltyScore(). Rows above from are known to be empty. */
-static int32_t ai_penalty(const map_t map, int from)
-{
-    int rough = 0;
-    int height = 0;
-    int valley = 0;
-    int prev = 0;
     int i, j;
 
-    for (j = 0; j < TETRIS_COLS; j++) {
-        int col_height = 0;
-        int roof = 0;
+    for (i = 0; i < TETRIS_ROWS; i++) {
+        uint32_t r = 0U;
 
-        for (i = from; i < TETRIS_ROWS; i++) {
-            if (roof) {
-                if (map[i][j] == 0)
-                    rough++;     /* hole below the column's top */
-            } else if (map[i][j] != 0) {
-                roof = 1;
-                col_height = TETRIS_ROWS - i;
-            }
+        for (j = 0; j < TETRIS_COLS; j++) {
+            if (map[i][j] != 0)
+                r |= 1U << j;
         }
-        height += col_height;
-        if (j > 0)
-            valley += (col_height > prev) ? col_height - prev : prev - col_height;
-        prev = col_height;
+        b[i] = (uint16_t)r;
     }
-    return AI_ROUGH_W * rough + AI_HEIGHT_W * height + AI_VALLEY_W * valley;
 }
 
-/* Topmost occupied row of every column, TETRIS_ROWS for an empty one. */
-static void column_tops(const map_t map, int8_t top[TETRIS_COLS])
+/* Topmost occupied row of every column, TETRIS_ROWS for an empty one.
+ * Returns the topmost occupied row of the whole field. */
+static int column_tops(const ai_board_t b, int8_t top[TETRIS_COLS])
 {
+    uint32_t seen = 0U;
+    int first = TETRIS_ROWS;
     int i, j;
 
-    for (j = 0; j < TETRIS_COLS; j++) {
+    for (j = 0; j < TETRIS_COLS; j++)
         top[j] = TETRIS_ROWS;
-        for (i = 0; i < TETRIS_ROWS; i++) {
-            if (map[i][j] != 0) {
-                top[j] = (int8_t)i;
-                break;
-            }
+    for (i = 0; i < TETRIS_ROWS && seen != AI_FULL; i++) {
+        uint32_t fresh = b[i] & ~seen;
+
+        if (b[i] != 0U && first == TETRIS_ROWS)
+            first = i;
+        while (fresh != 0U) {
+            top[__builtin_ctz(fresh)] = (int8_t)i;
+            fresh &= fresh - 1U;
         }
+        seen |= b[i];
     }
+    return first;
 }
 
 /* Row a piece dropped straight down from row 0 comes to rest at: in each
  * of its columns the lowest cell lands on that column's top. Same result
- * as ghost_pos() from row 0, without testing every row on the way down,
- * which made the AI's 2-ply search take longer than one game tick on the
- * target. Only valid when the piece fits at row 0. */
+ * as ghost_pos() from row 0, without testing every row on the way down.
+ * Only valid when the piece fits at row 0. */
 static int landing_row(const int8_t top[TETRIS_COLS], int block, int rot, int x)
 {
     const int n = k_size[block];
@@ -402,53 +422,233 @@ static int landing_row(const int8_t top[TETRIS_COLS], int block, int rot, int x)
     return y;
 }
 
-/* Drops block straight down from row 0 at (x, rot) into a copy of map and
- * removes the lines it completes. top holds column_tops() of map. Returns
- * the number of lines, -1 if the piece does not fit at the top at all.
- * *from gets a row above which out is empty, for ai_penalty(). */
-static int ai_drop(const map_t map, const int8_t top[TETRIS_COLS], int block,
-                   int x, int rot, map_t out, int *from)
-{
-    int y, j;
+/* A placement as ai_drop() leaves it. */
+typedef struct {
+    int lines;      /* cleared */
+    int eroded;     /* lines x cells of the piece in them */
+    int landing2;   /* twice the landing height */
+    int from;       /* rows above this one are empty */
+} ai_drop_t;
 
-    if (check_collision(map, block, rot, x, 0))
+/* The rows of a piece's box at column x as row masks. -1 if a cell lies
+ * outside the walls. */
+static int piece_masks(int block, int rot, int x, uint32_t m[4])
+{
+    const int n = k_size[block];
+    const uint8_t *bm = k_shape[block][rot];
+    int i, j;
+
+    for (i = 0; i < n; i++) {
+        m[i] = 0U;
+        for (j = 0; j < n; j++) {
+            if (bm[i * n + j] == 0U)
+                continue;
+            if (x + j < 0 || x + j >= TETRIS_COLS)
+                return -1;
+            m[i] |= 1U << (x + j);
+        }
+    }
+    return 0;
+}
+
+/* Drops block straight down from row 0 at (x, rot) into a copy of b and
+ * removes the lines it completes. top and first are column_tops() of b.
+ * Returns 0, or -1 if the piece does not fit at the top at all.
+ *
+ * The browser version's ai_removeCompletedLines() moved on to the next
+ * row after a removal, so of two adjacent complete lines it counted and
+ * removed only one, and the AI saw a tetromino clear as a single. Here
+ * every complete row goes. Only the piece's rows can be complete: the AI
+ * stamps pieces into fields without complete lines. */
+static int ai_drop(const ai_board_t b, const int8_t top[TETRIS_COLS],
+                   int first, int block, int x, int rot, ai_board_t out,
+                   ai_drop_t *d)
+{
+    const int n = k_size[block];
+    uint32_t m[4];
+    int lo = n, hi = -1;
+    int cells = 0;
+    int y, i;
+
+    if (piece_masks(block, rot, x, m) < 0)
         return -1;
+    for (i = 0; i < n; i++) {
+        if ((m[i] & b[i]) != 0U)
+            return -1;
+    }
     y = landing_row(top, block, rot, x);
     if (y < 0)
         y = 0;
-    memcpy(out, map, sizeof(map_t));
-    stamp_block(out, block, rot, x, y);
-    *from = y;
-    for (j = 0; j < TETRIS_COLS; j++) {
-        if (top[j] < *from)
-            *from = top[j];
+    memcpy(out, b, sizeof(ai_board_t));
+
+    /* The piece's rows, and its cells in the rows it completes. */
+    for (i = 0; i < n; i++) {
+        if (m[i] == 0U)
+            continue;
+        if (i < lo)
+            lo = i;
+        hi = i;
+        out[y + i] = (uint16_t)(out[y + i] | m[i]);
+        if (out[y + i] == AI_FULL)
+            cells += popcount16(m[i]);
     }
-    return ai_remove_completed_lines(out, y, y + k_size[block] - 1);
+    d->landing2 = 2 * (TETRIS_ROWS - 1 - (y + hi)) + (hi - lo);
+    d->from = (y < first) ? y : first;
+
+    d->lines = 0;
+    if (cells > 0) {
+        /* Every row that is not complete moves down over the complete
+         * ones, the top fills up with empty rows. */
+        int k = y + hi;
+
+        for (i = y + hi; i >= 0; i--) {
+            if (out[i] != AI_FULL)
+                out[k--] = out[i];
+        }
+        d->lines = k + 1;
+        for (; k >= 0; k--)
+            out[k] = 0U;
+    }
+    d->eroded = d->lines * cells;
+    return 0;
+}
+
+/* The part of the score that belongs to the piece itself. */
+static int32_t ai_piece_value(const ai_drop_t *d, int tetris_play)
+{
+    const int32_t v = -AI_LANDING_W * d->landing2 / 2;
+
+    if (!tetris_play || d->lines == 0)
+        return v + AI_ERODED_W * d->eroded;
+    return v + ((d->lines == 4) ? AI_TETRIS_W : -AI_FEW_LINES_W * d->lines);
+}
+
+/* The part that belongs to the field left behind. Rows above from are
+ * known to be empty: each has the two row transitions at the walls and
+ * nothing else. With tetris_play, the well column as described at
+ * AI_WELL_COL: filled for the row transitions, left out of everything
+ * else, and its neighbour does not count as a well either. */
+static int32_t ai_field_value(const ai_board_t b, int from, int tetris_play)
+{
+    const uint32_t wellbit = tetris_play ? (1U << AI_WELL_COL) : 0U;
+    const uint32_t cols = AI_FULL & ~wellbit;
+    const uint32_t well_cols = cols & ~(wellbit >> 1) & ~(wellbit << 1);
+    uint32_t prev = 0U, roof = 0U, wprev = 0U;
+    int8_t depth[TETRIS_COLS];
+    int rowtrans = 2 * from;
+    int coltrans = 0;
+    int holes = 0;
+    int wells = 0;
+    int in_well = 0;
+    int i;
+
+    for (i = from; i < TETRIS_ROWS; i++) {
+        const uint32_t r = b[i];
+        /* The row with a wall bit on either side, bits 0..COLS+1. */
+        const uint32_t v = ((r | wellbit) << 1) | 1U | (1U << (TETRIS_COLS + 1));
+        uint32_t w;
+
+        rowtrans += popcount16((v ^ (v >> 1)) & ((1U << (TETRIS_COLS + 1)) - 1U));
+        coltrans += popcount16((r ^ prev) & cols);
+        holes += popcount16(~r & roof & cols);
+        in_well += (r & wellbit) != 0U;
+        prev = r;
+        roof |= r;
+
+        /* Well cells: empty, filled (or the wall) left and right. Each
+         * adds the depth of its run so far. */
+        w = ~r & ((r << 1) | 1U) & ((r >> 1) | (1U << (TETRIS_COLS - 1))) &
+            well_cols;
+        {
+            uint32_t k = w;
+
+            while (k != 0U) {
+                const int j = __builtin_ctz(k);
+
+                depth[j] = (int8_t)(((wprev >> j) & 1U) ? depth[j] + 1 : 1);
+                wells += depth[j];
+                k &= k - 1U;
+            }
+        }
+        wprev = w;
+    }
+    coltrans += popcount16(~prev & cols);   /* the floor is filled */
+
+    return -AI_ROWTRANS_W * rowtrans - AI_COLTRANS_W * coltrans -
+           AI_HOLES_W * holes - AI_WELLS_W * wells - AI_WELL_W * in_well;
+}
+
+/* Whether the key presses of ai_run() get the falling piece to (x, rot)
+ * before it locks, at the game's current speed: they move it one column
+ * and one rotation per tick while gravity goes on. ai_drop() lets the
+ * piece fall straight from the top, which on a high stack at a high level
+ * it does not get to do: it lands on the way over. Played out tick by
+ * tick from the tick ai_move() runs in, by the rules of state_normal().
+ * Once in place the piece only goes straight down, to where ai_drop()
+ * puts it. */
+static int ai_reachable(const tetris_t *t, int x, int rot)
+{
+    const map_t *map = (const map_t *)&t->map;
+    const int nrot = k_rotations[t->block];
+    int px = t->x, py = t->y, pr = t->rot;
+    unsigned frame = t->frame;
+    int first = 1;
+
+    for (;;) {
+        if (!first) {
+            int nr;
+
+            if (++frame > t->speed)
+                frame = 0;
+            if (px == x && pr == rot)
+                return 1;
+            if (px != x) {
+                const int dx = (x > px) ? 1 : -1;
+
+                if (!check_collision(*map, t->block, pr, px + dx, py))
+                    px += dx;
+            }
+            nr = pr;
+            if (rot > pr)
+                nr = (pr + 1) % nrot;
+            else if (rot < pr)
+                nr = (pr + nrot - 1) % nrot;
+            if (nr != pr && t->block != 3 &&
+                !kick_rotation(*map, t->block, pr, nr, &px, &py))
+                pr = nr;
+        }
+        first = 0;
+        if (frame == 0) {
+            if (check_collision(*map, t->block, pr, px, py + 1))
+                return px == x && pr == rot;
+            py++;
+        }
+    }
 }
 
 /* Below any real score, and far enough from INT32_MIN that adding the
- * first ply's line bonus cannot overflow. */
+ * first ply's piece value cannot overflow. */
 #define AI_NO_MOVE (-(INT32_C(1) << 30))
 
 /* Second ply of ai_move(): the best score any placement of block reaches
- * on map, counting the lines it clears and the penalty of what is left. */
-static int32_t ai_best_leaf(const map_t map, int block)
+ * on b, for the piece and the field it leaves. */
+static int32_t ai_best_leaf(const ai_board_t b, int block, int tetris_play)
 {
-    map_t tmp;
+    ai_board_t tmp;
     int8_t top[TETRIS_COLS];
+    const int first = column_tops(b, top);
     int32_t best = AI_NO_MOVE;
     int x, r;
 
-    column_tops(map, top);
     for (x = TETRIS_AI_X_MIN; x <= TETRIS_AI_X_MAX; x++) {
         for (r = 0; r < k_rotations[block]; r++) {
-            int from;
-            const int lines = ai_drop(map, top, block, x, r, tmp, &from);
+            ai_drop_t d;
             int32_t score;
 
-            if (lines < 0)
+            if (ai_drop(b, top, first, block, x, r, tmp, &d) < 0)
                 continue;
-            score = AI_LINE_W * lines - ai_penalty(tmp, from);
+            score = ai_piece_value(&d, tetris_play) +
+                    ai_field_value(tmp, d.from, tetris_play);
             if (score > best)
                 best = score;
         }
@@ -491,9 +691,11 @@ static void ai_blunder(tetris_t *t)
  * at random now and then, which is what lets a game end at all. */
 static void ai_move(tetris_t *t)
 {
-    map_t tmp;
+    ai_board_t board, tmp;
     int8_t top[TETRIS_COLS];
     int32_t best = AI_NO_MOVE;
+    int tetris_play = 1;
+    int first;
     int x, r;
 
     t->ai_x = t->x;
@@ -502,18 +704,22 @@ static void ai_move(tetris_t *t)
         ai_blunder(t);
         return;
     }
-    column_tops((const int8_t (*)[TETRIS_COLS])t->map, top);
+    ai_board((const int8_t (*)[TETRIS_COLS])t->map, board);
+    first = column_tops(board, top);
+    for (x = 0; x < TETRIS_COLS; x++) {
+        if (x != AI_WELL_COL && TETRIS_ROWS - top[x] >= AI_SAFE_HEIGHT)
+            tetris_play = 0;
+    }
     for (x = TETRIS_AI_X_MIN; x <= TETRIS_AI_X_MAX; x++) {
         for (r = 0; r < k_rotations[t->block]; r++) {
-            int from;
-            const int lines = ai_drop((const int8_t (*)[TETRIS_COLS])t->map,
-                                      top, t->block, x, r, tmp, &from);
+            ai_drop_t d;
             int32_t score;
 
-            if (lines < 0)
+            if (ai_drop(board, top, first, t->block, x, r, tmp, &d) < 0)
                 continue;
-            score = AI_LINE_W * lines + ai_best_leaf(tmp, t->next);
-            if (score > best) {
+            score = ai_piece_value(&d, tetris_play) +
+                    ai_best_leaf(tmp, t->next, tetris_play);
+            if (score > best && ai_reachable(t, x, r)) {
                 best = score;
                 t->ai_x = (int8_t)x;
                 t->ai_rot = (int8_t)r;
@@ -585,19 +791,14 @@ void tetris_init(tetris_t *t, uint32_t seed)
  * moves the piece by the first one that fits. 0 = rotated, 1 = blocked. */
 static int check_rotation(tetris_t *t, int from)
 {
-    const int8_t *kick = (t->block == 0) ? k_wallkick_i[from][t->rot]
-                                         : k_wallkick[from][t->rot];
-    int i;
+    int x = t->x, y = t->y;
 
-    for (i = 0; i < 10; i += 2) {
-        if (!check_collision((const int8_t (*)[TETRIS_COLS])t->map, t->block,
-                             t->rot, t->x + kick[i], t->y + kick[i + 1])) {
-            t->x = (int8_t)(t->x + kick[i]);
-            t->y = (int8_t)(t->y + kick[i + 1]);
-            return 0;
-        }
-    }
-    return 1;
+    if (kick_rotation((const int8_t (*)[TETRIS_COLS])t->map, t->block, from,
+                      t->rot, &x, &y))
+        return 1;
+    t->x = (int8_t)x;
+    t->y = (int8_t)y;
+    return 0;
 }
 
 /* gameStateNormal() */

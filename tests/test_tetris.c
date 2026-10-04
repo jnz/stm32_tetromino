@@ -216,7 +216,11 @@ static void scenario_ai_reaches_right_wall(void)
      * empty. A T pointing left (rotation 3) at box column 8 drops its nub
      * onto (21,8) and completes rows 20 and 21. The column range of the
      * browser AI (-1 .. COLS-3) never tried box column 8, and no other
-     * placement of the T completes two lines here. */
+     * placement of the T completes two lines here.
+     *
+     * A tower in column 0, as high as AI_SAFE_HEIGHT in tetris.c, makes the
+     * AI play for survival. Below it, it would keep column 9 empty as the
+     * well for a tetromino clear, and not want the double. */
     tetris_t t;
     int r, c, n;
 
@@ -225,6 +229,8 @@ static void scenario_ai_reaches_right_wall(void)
     for (r = TETRIS_ROWS - 3; r < TETRIS_ROWS; r++)
         for (c = 0; c < TETRIS_COLS - 2; c++)
             t.map[r][c] = 1;
+    for (r = TETRIS_ROWS - 10; r < TETRIS_ROWS; r++)
+        t.map[r][0] = 1;
     t.map[TETRIS_ROWS - 1][TETRIS_COLS - 2] = 1;
     t.block = 5;   /* T */
     t.next = 3;    /* O */

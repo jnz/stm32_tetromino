@@ -8,8 +8,8 @@
  *             The more lines, the more of it:
  *               1 line    nothing, it comes too often
  *               2 lines   the picture lights up warm, white text goes dark
- *               3 lines   a fade to the negative and back
- *               4 lines   colours cycle, through the negative and back
+ *               3 lines   the same in a cool blue
+ *               4 lines   colours turn once round the wheel, text dark
  *             All changes are fades, at most one dark-bright-dark swing per
  *             effect (well under the 3 flashes per second that photosensitive
  *             viewers may react to).

@@ -3,16 +3,15 @@
 ![Tetromino on the STM32F429I-DISC1](tetromino.gif)
 
 AI port (Claude Code) of my browser JavaScript Tetromino
-(<https://zwiener.org/tetromino.html>, 2011-2016) to the
-STM32F429I-DISC1 with its 240x320 panel. The AI plays, and when it loses, the
-game over screen shows the score next to the all-time best for 8 s before the
-next game starts. The best score and the number of games are kept in flash.
+(<https://zwiener.org/tetromino.html>, 2011-2016) to the STM32F429I-DISC1 with
+its 240x320 panel. The AI just plays forever.  The best score and the number of
+games are kept in flash.
 
 ```
 game/        game core + AI, renderer
 stm32f429/   firmware: HAL, BSP, display and glue code
 sim/         host PC simulator
-tests/       tests
+tests/       test suite
 tools/       gen_assets.py (artwork from art/ -> game/assets.c)
 art/         tile sheet and background (input of gen_assets.py)
 ```
@@ -52,6 +51,12 @@ make flash DEBUG=1        # probe can attach while running
 - Field 10x22 (2 hidden spawn rows), 7-bag randomizer,
   wall kick tables, scoring (40/100/300/1200 x level), level every 10 lines up
   to 20, ghost piece, and the AI moving the piece one key press per 50 ms tick.
+- **AI.** Two ply search over the falling and the preview piece, rated by
+  Dellacherie's features with the El-Tetris weights, on a bitboard. While
+  the stack is low it keeps the right column free as a well and plays for
+  tetromino clears (about half of its clears, 4-5x the points per hour of
+  playing singles), above that for survival. Placements it cannot reach
+  in time at the current speed are skipped.
 - **High score in flash.** A save happens at every game over and every 20 min
   while a game is ahead of the record. An erase happens once per 512 saves.
 - **256 colours, no SDRAM.** Double buffering, both buffers fit into the
@@ -60,7 +65,7 @@ make flash DEBUG=1        # probe can attach while running
 - **Partial redraw.** Only redraw changed screen elements.
 - **Line clear effects.** Clearing two or more lines changes the palette
   for a moment, more the more lines: a warm light-up for two (text turns
-  dark), a fade through the negative for three, a colour cycle for a
+  dark), the same in blue for three, a turn round the colour wheel for a
   tetromino clear. Only the LTDC's CLUT changes, the framebuffer is left
   alone.
 - **Against image retention.** The picture wanders by up to 2 px, one pixel

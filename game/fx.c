@@ -6,7 +6,7 @@
 #include <string.h>
 
 /* Length of the effect per number of lines, index 1..4. */
-static const uint32_t k_fx_ms[5] = { 0U, 0U, 900U, 1300U, 2600U };
+static const uint32_t k_fx_ms[5] = { 0U, 0U, 720U, 720U, 1280U };
 
 void fx_lines_cleared(fx_t *fx, int lines, uint32_t now_ms)
 {
@@ -113,13 +113,15 @@ static uint32_t textness(uint32_t c)
 /* --------------------------------------------------------------------- */
 
 #define FX_WARM    0xFFBE46U   /* the light of a double */
+#define FX_COOL    0x46BEFFU   /* ... and of a triple   */
 #define FX_INK     0x2A1A08U   /* white text on it */
-#define FX_RAINBOW 0xFF2828U   /* base of the turning tint of a tetromino */
+#define FX_RAINBOW 0xFF6464U   /* base of the turning light of a tetromino */
 
 int fx_palette(const fx_t *fx, uint32_t now_ms, uint32_t pal[256])
 {
     const uint32_t t = now_ms - fx->start_ms;
-    uint32_t light = 0U, tint = 0U, tint_c = 0U, inv = 0U, phase = 0U;
+    uint32_t env = 0U, light = 0U, light_c = FX_WARM;
+    uint32_t phase = 0U;
     int turn = 0;
     int k;
 
@@ -129,38 +131,34 @@ int fx_palette(const fx_t *fx, uint32_t now_ms, uint32_t pal[256])
 
     switch (fx->lines) {
     case 2:
-        light = ramp(t, 0U, 150U, 350U, 900U) * 160U / 256U;
-        break;
     case 3:
-        inv = ramp(t, 0U, 300U, 700U, 1300U);
+        env = ramp(t, 0U, 120U, 280U, 720U);
+        light = env * 160U / 256U;
+        light_c = (fx->lines == 2) ? FX_WARM : FX_COOL;
         break;
     default:
-        /* Two turns round the colour wheel over the whole effect, the
-         * picture through the negative in the middle of it. */
+        /* One turn round the colour wheel, lit up like the others by a
+         * colour that turns along. */
         turn = 1;
-        phase = t * (2U * 768U) / 2600U;
-        tint_c = hue(FX_RAINBOW, phase);
-        tint = ramp(t, 0U, 300U, 2200U, 2600U) * 120U / 256U;
-        inv = ramp(t, 400U, 900U, 1700U, 2200U);
+        phase = t * 768U / 1280U;
+        env = ramp(t, 0U, 160U, 960U, 1280U);
+        light = env * 170U / 256U;
+        light_c = hue(FX_RAINBOW, phase);
         break;
     }
 
     for (k = 0; k < 256; k++) {
+        /* Text is told by its own colour, before anything changed it. */
+        const uint32_t ink = textness(pal[k]);
         uint32_t c = pal[k];
 
         if (turn)
             c = hue(c, phase);
-        if (tint != 0U)
-            c = mix(c, screen(c, tint_c), tint);
-        if (light != 0U) {
-            /* Everything lit warm, the text turned dark on it. */
-            const uint32_t ink = textness(c);
-
-            c = mix(mix(c, screen(c, FX_WARM), light), FX_INK,
-                    ink * light / 160U);
-        }
-        if (inv != 0U)
-            c = mix(c, c ^ 0xFFFFFFU, inv);
+        if (light != 0U)
+            c = mix(c, screen(c, light_c), light);
+        /* The text turns dark on the lit up picture. */
+        if (ink != 0U)
+            c = mix(c, FX_INK, ink * env / 256U);
         pal[k] = c;
     }
     return 1;
