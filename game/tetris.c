@@ -289,6 +289,10 @@ enum { AI_THINK = 0, AI_MOVE, AI_IDLE };
  *   holes      empty cells below a column's top
  *   wells      per run of empty cells with both neighbours filled (or the
  *              wall), 1 + 2 + .. + its depth
+ * El-Tetris itself rewards the plain number of lines instead of the
+ * eroded cells, and counts every empty cell below a well cell into the
+ * well. Neither made a measurable difference in host runs of either AI.
+ *
  * The browser version had four simpler features (height, holes,
  * bumpiness, lines). Those let the stack fill up with holes it never dug
  * out of again, once the tetromino play below kept it high.
