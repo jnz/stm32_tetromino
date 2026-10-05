@@ -87,7 +87,7 @@ make flash DEBUG=1        # probe can attach while running
 
 `web/tetromino.html` is the same game and AI as a single standalone page,
 ported from the C code (with the same seed it plays the same game as the
-board). Open it in any browser: `F` fullscreen, `I` fast drop, `S` sound
+board). Open it in any browser: `F` fullscreen, `I` fast drop (while you play: the AI takes over), `S` sound
 effects and `M` music (those of the original browser version), `P` pause.
 The arrow keys, `Z`, `X` and Space take over from the AI, which plays
 again after your game over. `Ctrl+Z` takes back the last piece. On a

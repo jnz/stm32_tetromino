@@ -18,7 +18,8 @@
   search with the third ply spread over the ticks of the move, the same
   integer weights. With the same seed it plays the same game as the board.
 
-  Keys:  F fullscreen   I fast drop on/off   S sound   M music   P pause
+  Keys:  F fullscreen   I fast drop on/off (while you play: the AI takes over)
+         S sound   M music   P pause
          Ctrl+Z undo: the last piece once more (yours only, counted)
          Arrow keys, Z, X, Space: take over and play yourself
            (left/right move, up or X rotate, Z rotate back, down soft
@@ -102,26 +103,74 @@
     transform: translateX(-50%);
     max-width: calc(100vw - 24px);
     padding: 8px 14px;
-    border-radius: 999px;
+    border-radius: 16px;
     background: rgba(255, 255, 255, 0.08);
     backdrop-filter: blur(8px);
     -webkit-backdrop-filter: blur(8px);
     font: 500 13px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
     color: var(--fg);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    text-align: center;
+    width: max-content;   /* one line where it fits, else wrapped, never cut */
     opacity: 0;
     transition: opacity 0.4s ease;
     pointer-events: none;
   }
   .toast.show { opacity: 1; }
+  /* The gestures, once, the first time a finger takes over. */
+  .help {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+    background: rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    z-index: 10;
+  }
+  .help[hidden] { display: none; }
+  .help-card {
+    width: min(340px, 100%);
+    padding: 20px 20px 16px;
+    border-radius: 18px;
+    background: #1b1d23;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    color: var(--fg);
+    font: 500 15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  .help-card h2 { margin: 0 0 12px; font-size: 18px; }
+  .help-card dl { display: grid; grid-template-columns: auto 1fr; gap: 10px 14px; margin: 0 0 18px; }
+  .help-card dt { font-weight: 700; color: #f0c64a; white-space: nowrap; }
+  .help-card dd { margin: 0; color: #c9ccd3; }
+  .help-card button {
+    width: 100%;
+    height: 44px;
+    border-radius: 12px;
+    background: #f0c64a;
+    color: #15161a;
+    font: 700 16px/44px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    backdrop-filter: none;
+  }
   @media (prefers-reduced-motion: reduce) { .bar, .toast { transition: none; } }
 </style>
 </head>
 <body>
 <canvas id="screen" aria-label="Tetromino played by the AI"></canvas>
 <div class="toast" id="toast" role="status"></div>
+<div class="help" id="help" hidden>
+  <div class="help-card" role="dialog" aria-labelledby="help-title">
+    <h2 id="help-title">How to play</h2>
+    <dl>
+      <dt>Drag &larr; &rarr;</dt><dd>move</dd>
+      <dt>Tap</dt><dd>rotate</dd>
+      <dt>Drag &darr;</dt><dd>drop faster</dd>
+      <dt>Flick &darr;</dt><dd>drop</dd>
+      <dt>Two fingers</dt><dd>tap: undo the last piece</dd>
+    </dl>
+    <button id="help-go" type="button">Play</button>
+  </div>
+</div>
 <div class="bar">
   <button id="music" aria-pressed="false" title="Music (M)" aria-label="Music">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V6l11-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="16" r="2.5"/></svg>
@@ -753,6 +802,9 @@ function fxShake(fx, now) {
 /* ---------------------------------------------------- the ornament -- */
 
 const GAMEOVER_MS = 8000;
+/* A held left/right, as on the NES: the first step at once, the next after
+ * the delay (DAS, there 16 frames, 267 ms; here on the game's 50 ms
+ * steps), then one every 100 ms (6 frames there). */
 const REPEAT_DELAY_MS = 250, REPEAT_MS = 100, TAKEOVER_GUARD_MS = 1000;
 const KEY_LEFT = 1, KEY_RIGHT = 2, KEY_CW = 3, KEY_CCW = 4, KEY_SOFT = 5, KEY_HARD = 6;
 const UNDO_DEPTH = 50;   /* pieces a human can go back */
@@ -793,7 +845,9 @@ function cloneGame(t) {
   });
 }
 function pushUndo(a) {
-  a.undo.push(cloneGame(a.game));
+  const s = cloneGame(a.game);
+  s.placed = null;
+  a.undo.push(s);
   if (a.undo.length > UNDO_DEPTH) a.undo.shift();
 }
 /* Back to where the last placed piece appeared. Also from the game over
@@ -809,7 +863,14 @@ function appUndo(a) {
     a.undo.pop();
   }
   if (a.game_over) { a.game_over = false; a.hs.games--; a.dirty = true; }
-  a.game = cloneGame(a.undo[a.undo.length - 1]);
+  const snap = a.undo[a.undo.length - 1];
+  a.game = cloneGame(snap);
+  delete a.game.placed;
+  /* Mostly the piece was turned right and lay a column off: it comes back
+   * turned and above where it lay, where it fits up there. */
+  const p = snap.placed, g = a.game;
+  if (p && !collides(g.map, g.block, p.rot, p.x, g.y)) { g.rot = p.rot; g.x = p.x; }
+  else if (p && !collides(g.map, g.block, p.rot, g.x, g.y)) g.rot = p.rot;
   a.hold = 0;
   a.soft = false;
   a.undos++;
@@ -860,7 +921,10 @@ function appInput(a, key, down) {
   if (key === KEY_LEFT || key === KEY_RIGHT) {
     if (down && a.hold !== key) {
       a.hold = key; a.hold_since = a.now; a.repeat_at = a.now;
-      if (key === KEY_LEFT) k.left = 1; else k.right = 1;
+      /* Now, not with the next step; while lines flash, with that. */
+      if (!appShift(a, key === KEY_LEFT ? -1 : 1)) {
+        if (key === KEY_LEFT) k.left = 1; else k.right = 1;
+      }
     } else if (!down && a.hold === key) {
       a.hold = 0;
     }
@@ -901,8 +965,14 @@ function appTick(a) {
     k.fast_down = a.soft ? 1 : 0;
   }
   const lines = a.game.lines, warps = a.game.warpcount, bag = a.game.bagindex;
+  const rot = a.game.rot, x = a.game.x;
   tetrisTick(a.game);
-  if (a.human && a.game.bagindex !== bag && a.game.state !== ST_GAMEOVER) pushUndo(a);
+  if (a.human && a.game.bagindex !== bag) {
+    /* The piece is down: where it went, for an undo to start from. */
+    const top = a.undo[a.undo.length - 1];
+    if (top && top.bagindex === bag) top.placed = { rot, x };
+    if (a.game.state !== ST_GAMEOVER) pushUndo(a);
+  }
   const cleared = a.game.lines - lines;
   if (cleared > 0) fxLinesCleared(a.fx, cleared, a.now);
   fxSlam(a.fx, cleared, a.game.warpcount !== warps, a.human, a.now);
@@ -916,6 +986,25 @@ function appTick(a) {
   } else if (a.game.score > a.hs.best_score && a.game.ticks % 1200 === 0) {
     takeScore(a);   /* once a minute while ahead */
   }
+}
+
+/* The AI takes over a human's game where it stands. What the player made
+ * so far counts for the player's best; the game, which the AI may well
+ * never lose, is the AI's from here, for its best. */
+function appHandOver(a) {
+  if (!a.human || a.game_over) return false;
+  const t = a.game;
+  takeScore(a);
+  a.human = false;
+  t.ai_active = 1;
+  t.ai_superfast = a.fast ? 1 : 0;
+  t.ai_state = AI_THINK;   /* plans for the piece where it is */
+  a.hold = 0;
+  a.soft = false;
+  a.undo = [];
+  a.best_before = a.hs.best_score;
+  a.lines_before = a.hs.best_lines;
+  return true;
 }
 
 function appSetFast(a, on) {
@@ -1296,6 +1385,7 @@ function vgrad(x, y, w, h, c0, c1, tf) {
 
 let lastShake = 0;
 function render(shake) {
+  syncAiButton();
   const a = app, t = a.game;
   shakeY = Math.round(shake * sc);
   if (shakeY !== lastShake) dirtyAll = true;   /* the card moves: the page behind it too */
@@ -1748,7 +1838,22 @@ function setFast(on) {
   app.dirty = true; saveHs(app); need = true;
 }
 setFast(app.fast);
-fastBtn.addEventListener("click", (e) => { e.stopPropagation(); setFast(!app.fast); });
+/* While a human plays, the button hands the game to the AI; otherwise it
+ * switches the fast drop. Its label says which. */
+function aiButton() {
+  if (appHandOver(app)) { toast("The AI plays on", 2000); need = true; }
+  else setFast(!app.fast);
+  syncAiButton();
+}
+function syncAiButton() {
+  const hand = app.human && !app.game_over;
+  const label = hand ? "Let AI play" : "AI>";
+  if (fastBtn.textContent !== label) {
+    fastBtn.textContent = label;
+    fastBtn.title = hand ? "Let the AI play on (I)" : "Fast drop (I)";
+  }
+}
+fastBtn.addEventListener("click", (e) => { e.stopPropagation(); aiButton(); });
 
 const root = document.documentElement;
 const canFull = !!(root.requestFullscreen || root.webkitRequestFullscreen);
@@ -1778,8 +1883,9 @@ function key(e, down) {
   if (k !== undefined) {
     e.preventDefault();
     if (e.repeat || paused) return;
-    const wasHuman = app.human && !app.game_over;
+    const wasHuman = app.human && !app.game_over, x = app.game.x;
     appInput(app, k, down);
+    if (wasHuman && app.game.x !== x) play("move", 0.8);   /* moved at once */
     if (down && !wasHuman && app.human)
       toast("\u2190 \u2192 move \u00b7 \u2191 / X rotate \u00b7 Z back \u00b7 \u2193 soft \u00b7 Space drop \u00b7 Ctrl+Z undo", 5000);
     need = true;
@@ -1793,7 +1899,7 @@ function key(e, down) {
   }
   if (e.ctrlKey || e.metaKey) return;
   if (e.key === "f" || e.key === "F") toggleFull();
-  if (e.key === "i" || e.key === "I") setFast(!app.fast);
+  if (e.key === "i" || e.key === "I") aiButton();
   if (e.key === "s" || e.key === "S") { setSound(!soundOn); toast(soundOn ? "Sound effects on" : "Sound effects off", 1500); }
   if (e.key === "m" || e.key === "M") { setMusic(!musicOn); toast(musicOn ? "Music on" : "Music off", 1500); }
   if (e.key === "p" || e.key === "P") { paused = !paused; toast(paused ? "Paused \u00b7 P to go on" : "", paused ? 1e9 : 1); }
@@ -1813,9 +1919,9 @@ function undo() {
  * the game over screen) a touch only takes over, like a key. A mouse
  * does nothing here, it has the keyboard. */
 const TOUCH_HELP = "Drag ← → move · tap rotate · drag ↓ soft · flick ↓ drop · two fingers undo";
-const TAP_MS = 250, SLOP_PX = 10, FLICK_PX_MS = 0.7, TWO_TAP_MS = 350;
+const TAP_MS = 250, SLOP_PX = 10, FLICK_PX_MS = 0.7, TWO_TAP_MS = 400;
 const fingers = new Map();
-let gest = null, twoTap = null;
+let gest = null;
 
 function colPx() { return cs / dpr; }   /* a column, in CSS pixels */
 
@@ -1824,19 +1930,17 @@ canvas.addEventListener("pointerdown", (e) => {
   e.preventDefault();
   try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* gone already */ }
   fingers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-  if (fingers.size === 2) {
-    /* A second finger: no gesture of the first one, maybe an undo. */
+  if (fingers.size > 1) {
+    /* A second finger: no gesture of the first one, maybe an undo (with
+     * the touch events below). */
     if (gest) app.soft = false;
     gest = null;
-    twoTap = { t0: e.timeStamp, moved: false };
     return;
   }
-  if (fingers.size > 2) { twoTap = null; return; }
-  twoTap = null;
   if (paused) return;
   if (!app.human || app.game_over) {
     appInput(app, KEY_LEFT, true);   /* takes over, if the guard lets it */
-    if (app.human && !app.game_over) toast(TOUCH_HELP, 5000);
+    if (app.human && !app.game_over) touchHelp();
     need = true;
     return;
   }
@@ -1847,7 +1951,6 @@ canvas.addEventListener("pointerdown", (e) => {
 canvas.addEventListener("pointermove", (e) => {
   const f = fingers.get(e.pointerId);
   if (!f) return;
-  if (twoTap && Math.hypot(e.clientX - f.x, e.clientY - f.y) > 2 * SLOP_PX) twoTap.moved = true;
   if (!gest || gest.id !== e.pointerId) return;
   const g = gest, dx = e.clientX - g.x0, dy = e.clientY - g.y0, col = colPx();
   g.trail.push([e.timeStamp, e.clientX, e.clientY]);
@@ -1867,10 +1970,6 @@ canvas.addEventListener("pointermove", (e) => {
 
 function fingerUp(e, cancel) {
   if (!fingers.delete(e.pointerId)) return;
-  if (twoTap && fingers.size === 0) {
-    if (!cancel && !twoTap.moved && e.timeStamp - twoTap.t0 < TWO_TAP_MS) undo();
-    twoTap = null;
-  }
   if (!gest || gest.id !== e.pointerId) return;
   const g = gest;
   gest = null;
@@ -1893,6 +1992,52 @@ function fingerUp(e, cancel) {
 canvas.addEventListener("pointerup", (e) => fingerUp(e, false));
 canvas.addEventListener("pointercancel", (e) => fingerUp(e, true));
 canvas.addEventListener("contextmenu", (e) => e.preventDefault());
+
+/* The first time a finger takes over, the gestures on a card, the game
+ * waiting; later only a line on top. Touch is known for sure only when it
+ * comes: phones, tablets, and laptops with a touch screen too. */
+const helpEl = document.getElementById("help");
+function touchHelp() {
+  let seen = false;
+  try { seen = localStorage.getItem("tetromino-touch-help") === "1"; } catch (e) { /* fine */ }
+  if (seen) { toast(TOUCH_HELP, 5000); return; }
+  paused = true;
+  helpEl.hidden = false;
+}
+document.getElementById("help-go").addEventListener("click", (e) => {
+  e.stopPropagation();
+  helpEl.hidden = true;
+  paused = false;
+  need = true;
+  try { localStorage.setItem("tetromino-touch-help", "1"); } catch (err) { /* fine */ }
+});
+
+/* The two finger tap, with touch events: with two fingers down iOS Safari
+ * may cancel the pointers (it would zoom), the touches it keeps. */
+let two = null;
+canvas.addEventListener("touchstart", (e) => {
+  if (e.touches.length === 2) {
+    two = { t0: e.timeStamp, at: new Map(), moved: false };
+    for (const t of e.touches) two.at.set(t.identifier, [t.clientX, t.clientY]);
+  } else if (e.touches.length > 2) {
+    two = null;
+  }
+}, { passive: true });
+canvas.addEventListener("touchmove", (e) => {
+  if (!two) return;
+  for (const t of e.touches) {
+    const p = two.at.get(t.identifier);
+    if (p && Math.hypot(t.clientX - p[0], t.clientY - p[1]) > 2 * SLOP_PX) two.moved = true;
+  }
+}, { passive: true });
+canvas.addEventListener("touchend", (e) => {
+  if (!two || e.touches.length > 0) return;
+  if (!two.moved && e.timeStamp - two.t0 < TWO_TAP_MS && app.human) undo();
+  two = null;
+});
+canvas.addEventListener("touchcancel", () => { two = null; });
+/* No pinch zoom of the page (Safari's own gesture events). */
+document.addEventListener("gesturestart", (e) => e.preventDefault());
 
 /* Sound effects and music, each on its own button. */
 const soundBtn = document.getElementById("sound"), musicBtn = document.getElementById("music");
