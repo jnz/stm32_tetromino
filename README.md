@@ -13,8 +13,8 @@ stm32f429/   firmware: HAL, BSP, display and glue code
 sim/         host PC simulator
 tests/       test suite
 tools/       gen_assets.py (artwork from art/ -> game/assets.c)
-web/         the game and AI as one standalone web page
-art/         tile sheet and background (input of gen_assets.py)
+web/         the game and AI as one standalone web page (template in web/src/)
+art/         tile sheet, background and music (input of gen_assets.py, gen_web.py)
 ```
 
 ## Flash a prebuilt release
@@ -98,4 +98,9 @@ at random now and then.
 `python tools/gen_assets.py` (Pillow, DejaVu Sans Bold from matplotlib or the
 system). Tiles come from `art/tetromino_blocks.png` scaled to
 15 px, the background from `art/basi.png`.
+
+`python tools/gen_web.py` (`make web`, no packages needed) builds
+`web/tetromino.html` from `web/src/tetromino.html` and embeds `art/basi.svg`
+and the music in `art/sound/`; the sound effects are synthesized in the page.
+Edit the template, then run it.
 

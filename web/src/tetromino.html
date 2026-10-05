@@ -1,0 +1,1721 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0c0f">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Tetromino AI</title>
+<!--
+  Built by tools/gen_web.py from web/src/tetromino.html and the files in
+  art/, which it embeds: edit those, not web/tetromino.html.
+
+  Tetromino AI: the game and the AI of the STM32F429I-DISC1 desktop
+  ornament (github.com/jnz/stm32_tetromino), ported line by line from its
+  C code, in one standalone page. Same rules, same 7-bag, same AI: two ply
+  search with the third ply spread over the ticks of the move, the same
+  integer weights. With the same seed it plays the same game as the board.
+
+  Keys:  F fullscreen   I fast drop on/off   S sound   M music   P pause
+         Ctrl+Z undo: the last piece once more (yours only, counted)
+         Arrow keys, Z, X, Space: take over and play yourself
+           (left/right move, up or X rotate, Z rotate back, down soft
+           drop, Space hard drop). After your game over the AI goes on.
+  URL:   ?blunder=50    per mille of pieces the AI places at random
+         ?seed=123      fixed seed instead of a random one
+
+  Sound effects: synthesized with Web Audio, no files. Music: the browser
+  version at zwiener.org/tetromino.html.
+
+  Copyright (c) 2026 Jan Zwiener (jan@zwiener.org)
+-->
+<style>
+  :root {
+    --bg: #0b0c0f;
+    --fg: #e8e8ea;
+    --ui: rgba(255, 255, 255, 0.08);
+    --ui-hover: rgba(255, 255, 255, 0.16);
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: var(--bg);
+    color: var(--fg);
+    overflow: hidden;
+    -webkit-tap-highlight-color: transparent;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  body {
+    background:
+      radial-gradient(120% 90% at 50% 40%, #191b22 0%, var(--bg) 70%);
+  }
+  canvas {
+    position: fixed;
+    inset: 0;
+    width: 100vw;
+    height: 100vh;
+    height: 100dvh;
+    display: block;
+    touch-action: manipulation;
+  }
+  .bar {
+    position: fixed;
+    right: max(12px, env(safe-area-inset-right));
+    bottom: max(12px, env(safe-area-inset-bottom));
+    display: flex;
+    gap: 8px;
+    transition: opacity 0.4s ease;
+  }
+  .idle .bar { opacity: 0; pointer-events: none; }
+  .idle { cursor: none; }
+  button {
+    appearance: none;
+    border: 0;
+    border-radius: 999px;
+    min-width: 40px;
+    height: 40px;
+    padding: 0 14px;
+    background: var(--ui);
+    color: var(--fg);
+    font: 600 13px/40px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    letter-spacing: 0.02em;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    cursor: pointer;
+  }
+  button:hover { background: var(--ui-hover); }
+  button[aria-pressed="true"] { color: #ff6b6b; }
+  #sound[aria-pressed="true"], #music[aria-pressed="true"] { color: #7ee07e; }
+  button svg { width: 18px; height: 18px; vertical-align: -4px; }
+  .toast {
+    position: fixed;
+    left: 50%;
+    top: max(14px, env(safe-area-inset-top));
+    transform: translateX(-50%);
+    max-width: calc(100vw - 24px);
+    padding: 8px 14px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.08);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    font: 500 13px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    color: var(--fg);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    opacity: 0;
+    transition: opacity 0.4s ease;
+    pointer-events: none;
+  }
+  .toast.show { opacity: 1; }
+  @media (prefers-reduced-motion: reduce) { .bar, .toast { transition: none; } }
+</style>
+</head>
+<body>
+<canvas id="screen" aria-label="Tetromino played by the AI"></canvas>
+<div class="toast" id="toast" role="status"></div>
+<div class="bar">
+  <button id="music" aria-pressed="false" title="Music (M)" aria-label="Music">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V6l11-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="16" r="2.5"/></svg>
+  </button>
+  <button id="sound" aria-pressed="false" title="Sound effects (S)" aria-label="Sound effects">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9h4l5-4v14l-5-4H4z"/><path id="snd-w1" d="M16 9.5a3.5 3.5 0 0 1 0 5"/><path id="snd-w2" d="M18.5 7a7 7 0 0 1 0 10"/><path id="snd-x" d="M16 9l5 6M21 9l-5 6"/></svg>
+  </button>
+  <button id="fast" aria-pressed="false" title="Fast drop (I)">AI&gt;</button>
+  <button id="full" title="Fullscreen (F)" aria-label="Fullscreen">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
+  </button>
+</div>
+<script>
+"use strict";
+
+/* ===================================================================== */
+/* CORE BEGIN: game, AI, line clear effects and the ornament around them. */
+/* Port of game/tetris.c, game/fx.c and game/app.c. No DOM in here, so    */
+/* the core also runs under Node for the tests against the C code.        */
+/* ===================================================================== */
+
+const COLS = 10, ROWS = 22, HIDDEN_ROWS = 2, TICK_MS = 50, MAX_LEVEL = 20, PIECES = 7;
+const ST_FIRSTBLOCK = 0, ST_NORMAL = 1, ST_CLEARLINES = 2, ST_GAMEOVER = 3;
+const LINESCORE = [40, 100, 300, 1200];
+const FLASH_COUNT = 1;
+const LEVELUP_TICKS = 2000 / TICK_MS;
+
+const SIZE = [4, 3, 3, 2, 3, 3, 3];
+const ROTATIONS = [4, 4, 4, 1, 4, 4, 4];
+const SHAPE = [
+  [[0,0,0,0, 1,1,1,1, 0,0,0,0, 0,0,0,0], [0,0,1,0, 0,0,1,0, 0,0,1,0, 0,0,1,0],
+   [0,0,0,0, 0,0,0,0, 1,1,1,1, 0,0,0,0], [0,1,0,0, 0,1,0,0, 0,1,0,0, 0,1,0,0]],
+  [[2,0,0, 2,2,2, 0,0,0], [0,2,2, 0,2,0, 0,2,0], [0,0,0, 2,2,2, 0,0,2], [0,2,0, 0,2,0, 2,2,0]],
+  [[0,0,3, 3,3,3, 0,0,0], [0,3,0, 0,3,0, 0,3,3], [0,0,0, 3,3,3, 3,0,0], [3,3,0, 0,3,0, 0,3,0]],
+  [[4,4, 4,4]],
+  [[0,5,5, 5,5,0, 0,0,0], [0,5,0, 0,5,5, 0,0,5], [0,0,0, 0,5,5, 5,5,0], [5,0,0, 5,5,0, 0,5,0]],
+  [[0,6,0, 6,6,6, 0,0,0], [0,6,0, 0,6,6, 0,6,0], [0,0,0, 6,6,6, 0,6,0], [0,6,0, 6,6,0, 0,6,0]],
+  [[7,7,0, 0,7,7, 0,0,0], [0,0,7, 0,7,7, 0,7,0], [0,0,0, 7,7,0, 0,7,7], [0,7,0, 7,7,0, 7,0,0]],
+];
+
+/* Wall kicks [from][to], five (x, y) offsets. Unlisted transitions are
+ * all zero, as in the C tables. */
+function kickTable(list) {
+  const t = [];
+  for (let f = 0; f < 4; f++) { t.push([]); for (let k = 0; k < 4; k++) t[f].push(new Array(10).fill(0)); }
+  for (const [f, k, v] of list) t[f][k] = v;
+  return t;
+}
+const WALLKICK = kickTable([
+  [0, 1, [0, 0, -1, 0, -1, 1, 0, -2, -1, -2]], [0, 3, [0, 0, 1, 0, 1, 1, 0, -2, 1, -2]],
+  [1, 0, [0, 0, 1, 0, 1, -1, 0, 2, 1, 2]],     [1, 2, [0, 0, 1, 0, 1, -1, 0, 2, 1, 2]],
+  [2, 1, [0, 0, -1, 0, -1, 1, 0, -2, -1, -2]], [2, 3, [0, 0, 1, 0, 1, 1, 0, -2, 1, -2]],
+  [3, 2, [0, 0, -1, 0, -1, -1, 0, 2, -1, 2]],  [3, 0, [0, 0, -1, 0, -1, -1, 0, 2, -1, 2]],
+]);
+const WALLKICK_I = kickTable([
+  [0, 1, [0, 0, -2, 0, 1, 0, -2, -1, 1, 2]], [0, 3, [0, 0, -1, 0, 2, 0, -1, 2, 2, -1]],
+  [1, 0, [0, 0, 2, 0, -1, 0, 2, 1, -1, -2]], [1, 2, [0, 0, -1, 0, 2, 0, -1, 2, 2, -1]],
+  [2, 1, [0, 0, 1, 0, -2, 0, 1, -2, -2, 1]], [2, 3, [0, 0, 2, 0, -1, 0, 2, 1, -1, -2]],
+  [3, 2, [0, 0, -2, 0, 1, 0, -2, -1, 1, 2]], [3, 0, [0, 0, 1, 0, -2, 0, 1, -2, -2, 1]],
+]);
+
+function pieceCell(block, rot, row, col) {
+  const r = ((rot % ROTATIONS[block]) + ROTATIONS[block]) % ROTATIONS[block];
+  return SHAPE[block][r][row * SIZE[block] + col];
+}
+
+/* map: Int8Array(ROWS * COLS), row major. */
+function collides(map, block, rot, x, y) {
+  const n = SIZE[block], bm = SHAPE[block][rot];
+  for (let i = 0; i < n; i++)
+    for (let j = 0; j < n; j++) {
+      if (bm[i * n + j] === 0) continue;
+      if (x + j >= COLS || x + j < 0 || y + i >= ROWS || y + i < 0 ||
+          map[(y + i) * COLS + x + j] !== 0) return true;
+    }
+  return false;
+}
+
+/* Returns the kicked position {x, y}, or null when blocked. */
+function kickRotation(map, block, from, to, x, y) {
+  const kick = block === 0 ? WALLKICK_I[from][to] : WALLKICK[from][to];
+  for (let i = 0; i < 10; i += 2)
+    if (!collides(map, block, to, x + kick[i], y + kick[i + 1]))
+      return { x: x + kick[i], y: y + kick[i + 1] };
+  return null;
+}
+
+function stamp(map, block, rot, x, y) {
+  const n = SIZE[block], bm = SHAPE[block][rot];
+  for (let i = 0; i < n; i++)
+    for (let j = 0; j < n; j++) {
+      const row = y + i, col = x + j;
+      if (bm[i * n + j] === 0) continue;
+      if (row >= 0 && row < ROWS && col >= 0 && col < COLS) map[row * COLS + col] = bm[i * n + j];
+    }
+}
+
+function ghostPos(map, block, rot, x, y) {
+  for (let gy = y + 1; gy < ROWS; gy++)
+    if (collides(map, block, rot, x, gy)) return gy - 1;
+  return -1;
+}
+
+function rowFull(map, row) {
+  for (let j = 0; j < COLS; j++) if (map[row * COLS + j] === 0) return false;
+  return true;
+}
+
+function flashCompleteLines(map) {
+  let count = 0;
+  for (let i = ROWS - 1; i >= 0; i--) {
+    if (!rowFull(map, i)) continue;
+    count++;
+    for (let j = 0; j < COLS; j++) map[i * COLS + j] = -map[i * COLS + j];
+  }
+  return count;
+}
+
+function clearBottomLine(map) {
+  for (let i = ROWS - 1; i >= 1; i--) {
+    if (!rowFull(map, i)) continue;
+    map.copyWithin(COLS, 0, i * COLS);
+    map.fill(0, 0, COLS);
+    return;
+  }
+}
+
+function rnd(t) {
+  let x = t.rng;
+  x ^= x << 13; x >>>= 0;
+  x ^= x >>> 17;
+  x ^= x << 5; x >>>= 0;
+  t.rng = x;
+  return x;
+}
+
+function selectRandomBlock(t) {
+  if (t.bagindex >= PIECES) {
+    for (let m = 0; m < PIECES; m++) t.bag[m] = m;
+    for (let m = PIECES; m > 1; m--) {
+      const i = rnd(t) % m;
+      const tmp = t.bag[m - 1]; t.bag[m - 1] = t.bag[i]; t.bag[i] = tmp;
+    }
+    t.bagindex = 0;
+  }
+  return t.bag[t.bagindex++];
+}
+
+/* ---------------------------------------------------------------- AI -- */
+
+const AI_THINK = 0, AI_MOVE = 1, AI_IDLE = 2;
+
+/* Dellacherie's features, weights tuned from El-Tetris, in thousandths. */
+const AI_LANDING_W = 4432, AI_ERODED_W = 2756, AI_ROWTRANS_W = 3617,
+      AI_COLTRANS_W = 10635, AI_HOLES_W = 7643, AI_WELLS_W = 2469;
+/* Tetromino play: the right column kept as a well while the stack is low. */
+const AI_WELL_COL = COLS - 1, AI_SAFE_HEIGHT = 8, AI_TETRIS_W = 38749,
+      AI_SINGLE_W = 5651, AI_DOUBLE_W = 12470, AI_TRIPLE_W = 19302, AI_WELL_W = 4504;
+const AI_X_MIN = -2, AI_X_MAX = COLS - 1;
+const AI_FULL = (1 << COLS) - 1;
+const AI_NO_MOVE = -(1 << 30);
+const AI_BEAM = 10, AI_REFINE_PER_TICK = 4;
+
+function popcount16(v) {
+  v = v - ((v >>> 1) & 0x5555);
+  v = (v & 0x3333) + ((v >>> 2) & 0x3333);
+  v = (v + (v >>> 4)) & 0x0F0F;
+  return (v + (v >>> 8)) & 0x1F;
+}
+function ctz(v) { return 31 - Math.clz32(v & -v); }
+
+function aiBoard(map, b) {
+  for (let i = 0; i < ROWS; i++) {
+    let r = 0;
+    for (let j = 0; j < COLS; j++) if (map[i * COLS + j] !== 0) r |= 1 << j;
+    b[i] = r;
+  }
+}
+
+/* Fills top, returns the topmost occupied row of the whole field. */
+function columnTops(b, top) {
+  let seen = 0, first = ROWS;
+  top.fill(ROWS);
+  for (let i = 0; i < ROWS && seen !== AI_FULL; i++) {
+    let fresh = b[i] & ~seen;
+    if (b[i] !== 0 && first === ROWS) first = i;
+    while (fresh !== 0) { top[ctz(fresh)] = i; fresh &= fresh - 1; }
+    seen |= b[i];
+  }
+  return first;
+}
+
+function landingRow(top, block, rot, x) {
+  const n = SIZE[block], bm = SHAPE[block][rot];
+  let y = ROWS;
+  for (let j = 0; j < n; j++)
+    for (let i = n - 1; i >= 0; i--)
+      if (bm[i * n + j] !== 0) { const land = top[x + j] - 1 - i; if (land < y) y = land; break; }
+  return y;
+}
+
+const maskBuf = new Int32Array(4);
+function pieceMasks(block, rot, x, m) {
+  const n = SIZE[block], bm = SHAPE[block][rot];
+  for (let i = 0; i < n; i++) {
+    m[i] = 0;
+    for (let j = 0; j < n; j++) {
+      if (bm[i * n + j] === 0) continue;
+      if (x + j < 0 || x + j >= COLS) return false;
+      m[i] |= 1 << (x + j);
+    }
+  }
+  return true;
+}
+
+/* Drops block straight from row 0 into a copy of b (out), removes the
+ * lines it completes. d gets lines, eroded, landing2, from. false if the
+ * piece does not fit at the top. */
+function aiDrop(b, top, first, block, x, rot, out, d) {
+  const n = SIZE[block], m = maskBuf;
+  let lo = n, hi = -1, cells = 0;
+  if (!pieceMasks(block, rot, x, m)) return false;
+  for (let i = 0; i < n; i++) if ((m[i] & b[i]) !== 0) return false;
+  let y = landingRow(top, block, rot, x);
+  if (y < 0) y = 0;
+  out.set(b);
+  for (let i = 0; i < n; i++) {
+    if (m[i] === 0) continue;
+    if (i < lo) lo = i;
+    hi = i;
+    out[y + i] |= m[i];
+    if (out[y + i] === AI_FULL) cells += popcount16(m[i]);
+  }
+  d.landing2 = 2 * (ROWS - 1 - (y + hi)) + (hi - lo);
+  d.from = y < first ? y : first;
+  d.lines = 0;
+  if (cells > 0) {
+    let k = y + hi;
+    for (let i = y + hi; i >= 0; i--) if (out[i] !== AI_FULL) out[k--] = out[i];
+    d.lines = k + 1;
+    for (; k >= 0; k--) out[k] = 0;
+  }
+  d.eroded = d.lines * cells;
+  return true;
+}
+
+function aiPieceValue(d, tetrisPlay) {
+  const v = -AI_LANDING_W * d.landing2 / 2;
+  if (!tetrisPlay || d.lines === 0) return v + AI_ERODED_W * d.eroded;
+  switch (d.lines) {
+    case 1: return v - AI_SINGLE_W;
+    case 2: return v - AI_DOUBLE_W;
+    case 3: return v - AI_TRIPLE_W;
+    default: return v + AI_TETRIS_W;
+  }
+}
+
+const depthBuf = new Int32Array(COLS);
+function aiFieldValue(b, from, tetrisPlay) {
+  const wellbit = tetrisPlay ? (1 << AI_WELL_COL) : 0;
+  const cols = AI_FULL & ~wellbit;
+  const wellCols = cols & ~(wellbit >>> 1) & ~(wellbit << 1);
+  const depth = depthBuf;
+  let prev = 0, roof = 0, wprev = 0;
+  let rowtrans = 2 * from, coltrans = 0, holes = 0, wells = 0, inWell = 0;
+  for (let i = from; i < ROWS; i++) {
+    const r = b[i];
+    const v = ((r | wellbit) << 1) | 1 | (1 << (COLS + 1));
+    rowtrans += popcount16((v ^ (v >>> 1)) & ((1 << (COLS + 1)) - 1));
+    coltrans += popcount16((r ^ prev) & cols);
+    holes += popcount16(~r & roof & AI_FULL);
+    if (r & wellbit) inWell++;
+    prev = r;
+    roof |= r;
+    const w = ~r & ((r << 1) | 1) & ((r >>> 1) | (1 << (COLS - 1))) & wellCols;
+    let k = w;
+    while (k !== 0) {
+      const j = ctz(k);
+      depth[j] = ((wprev >>> j) & 1) ? depth[j] + 1 : 1;
+      wells += depth[j];
+      k &= k - 1;
+    }
+    wprev = w;
+  }
+  coltrans += popcount16(~prev & cols);
+  return -AI_ROWTRANS_W * rowtrans - AI_COLTRANS_W * coltrans -
+         AI_HOLES_W * holes - AI_WELLS_W * wells - AI_WELL_W * inWell;
+}
+
+/* Whether ai_run()'s key presses get the piece to (x, rot) before it locks. */
+function aiReachable(t, x, rot, keysNow) {
+  const map = t.map, block = t.block, nrot = ROTATIONS[block];
+  let px = t.x, py = t.y, pr = t.rot, frame = t.frame, first = true;
+  for (;;) {
+    if (!first || keysNow) {
+      if (!first && ++frame > t.speed) frame = 0;
+      if (px === x && pr === rot) return true;
+      if (px !== x) {
+        const dx = x > px ? 1 : -1;
+        if (!collides(map, block, pr, px + dx, py)) px += dx;
+      }
+      let nr = pr;
+      if (rot > pr) nr = (pr + 1) % nrot;
+      else if (rot < pr) nr = (pr + nrot - 1) % nrot;
+      if (nr !== pr && block !== 3) {
+        const k = kickRotation(map, block, pr, nr, px, py);
+        if (k) { px = k.x; py = k.y; pr = nr; }
+      }
+    }
+    first = false;
+    if (frame === 0) {
+      if (collides(map, block, pr, px, py + 1)) return px === x && pr === rot;
+      py++;
+    }
+  }
+}
+
+const leafTmp = new Uint16Array(ROWS), leafTop = new Int8Array(COLS);
+const leafD = { lines: 0, eroded: 0, landing2: 0, from: 0 };
+function aiBestLeaf(b, block, tetrisPlay) {
+  const first = columnTops(b, leafTop);
+  let best = AI_NO_MOVE;
+  for (let x = AI_X_MIN; x <= AI_X_MAX; x++)
+    for (let r = 0; r < ROTATIONS[block]; r++) {
+      if (!aiDrop(b, leafTop, first, block, x, r, leafTmp, leafD)) continue;
+      const score = aiPieceValue(leafD, tetrisPlay) + aiFieldValue(leafTmp, leafD.from, tetrisPlay);
+      if (score > best) best = score;
+    }
+  return best;
+}
+
+function aiBlunder(t) {
+  const xs = [], rs = [];
+  for (let x = AI_X_MIN; x <= AI_X_MAX; x++)
+    for (let r = 0; r < ROTATIONS[t.block]; r++) {
+      if (collides(t.map, t.block, r, x, 0)) continue;
+      xs.push(x); rs.push(r);
+    }
+  if (xs.length > 0) {
+    const k = rnd(t) % xs.length;
+    t.ai_x = xs[k]; t.ai_rot = rs[k];
+  }
+}
+
+function beamInsert(t, c) {
+  const beam = t.beam;
+  let n = t.nbeam;
+  if (n === AI_BEAM && c.score <= beam[AI_BEAM - 1].score) return;
+  let i = n < AI_BEAM ? n++ : AI_BEAM - 1;
+  const slot = beam[i];
+  while (i > 0 && beam[i - 1].score < c.score) { beam[i] = beam[i - 1]; i--; }
+  slot.score = c.score; slot.pieces = c.pieces; slot.x = c.x; slot.rot = c.rot;
+  slot.board.set(c.board);
+  beam[i] = slot;
+  t.nbeam = n;
+}
+
+function thirdPieces(t) {
+  if (t.bagindex >= PIECES) return [0, 1, 2, 3, 4, 5, 6];
+  return Array.from(t.bag.subarray(t.bagindex));
+}
+
+const moveBoard = new Uint16Array(ROWS), moveTmp = new Uint16Array(ROWS);
+const moveTop = new Int8Array(COLS), moveTop2 = new Int8Array(COLS);
+const moveD = { lines: 0, eroded: 0, landing2: 0, from: 0 };
+const moveD2 = { lines: 0, eroded: 0, landing2: 0, from: 0 };
+const moveCand = { score: 0, pieces: 0, x: 0, rot: 0, board: new Uint16Array(ROWS) };
+
+/* Two ply search when the piece appears; keeps the best pairs. */
+function aiMove(t) {
+  t.ai_x = t.x; t.ai_rot = t.rot;
+  t.nbeam = 0; t.refined = 0; t.ai_best = AI_NO_MOVE;
+  if (t.ai_blunder > 0 && (rnd(t) % 1000) < t.ai_blunder) { aiBlunder(t); return; }
+  aiBoard(t.map, moveBoard);
+  const first = columnTops(moveBoard, moveTop);
+  let tp = 1;
+  for (let x = 0; x < COLS; x++)
+    if (x !== AI_WELL_COL && ROWS - moveTop[x] >= AI_SAFE_HEIGHT) { tp = 0; break; }
+  t.tetris_play = tp;
+  const c = moveCand;
+  for (let x = AI_X_MIN; x <= AI_X_MAX; x++)
+    for (let r = 0; r < ROTATIONS[t.block]; r++) {
+      if (!aiDrop(moveBoard, moveTop, first, t.block, x, r, moveTmp, moveD) || !aiReachable(t, x, r, false))
+        continue;
+      const v1 = aiPieceValue(moveD, tp);
+      const first2 = columnTops(moveTmp, moveTop2);
+      c.x = x; c.rot = r;
+      for (let x2 = AI_X_MIN; x2 <= AI_X_MAX; x2++)
+        for (let r2 = 0; r2 < ROTATIONS[t.next]; r2++) {
+          if (!aiDrop(moveTmp, moveTop2, first2, t.next, x2, r2, c.board, moveD2)) continue;
+          c.pieces = v1 + aiPieceValue(moveD2, tp);
+          c.score = c.pieces + aiFieldValue(c.board, moveD2.from, tp);
+          beamInsert(t, c);
+        }
+    }
+  if (t.nbeam > 0) { t.ai_x = t.beam[0].x; t.ai_rot = t.beam[0].rot; }
+}
+
+/* Third ply for the next few candidates, over the pieces left in the bag. */
+function aiRefine(t) {
+  const third = thirdPieces(t);
+  for (let n = 0; n < AI_REFINE_PER_TICK && t.refined < t.nbeam; n++) {
+    const c = t.beam[t.refined++];
+    let sum = 0;
+    for (const p of third) sum += aiBestLeaf(c.board, p, t.tetris_play);
+    const score = c.pieces + Math.trunc(sum / third.length);
+    if (score > t.ai_best && aiReachable(t, c.x, c.rot, true)) {
+      t.ai_best = score; t.ai_x = c.x; t.ai_rot = c.rot;
+    }
+  }
+}
+
+function aiRun(t) {
+  if (t.state === ST_FIRSTBLOCK) t.ai_state = AI_THINK;
+  if (t.ai_state === AI_THINK) {
+    aiMove(t);
+    t.ai_state = AI_MOVE;
+  } else if (t.ai_state === AI_MOVE) {
+    aiRefine(t);
+    const ex = t.ai_x - t.x, er = t.ai_rot - t.rot;
+    if (ex > 0) t.keys.right = 1;
+    if (ex < 0) t.keys.left = 1;
+    if (er > 0) t.keys.rot_left = 1;
+    if (er < 0) t.keys.rot_right = 1;
+    if (ex === 0 && er === 0 && t.refined >= t.nbeam) {
+      if (t.ai_superfast) t.keys.warp_down = 1;
+      t.ai_state = AI_IDLE;
+    }
+  } else {
+    t.keys.fast_down = 1;
+  }
+}
+
+/* --------------------------------------------------------- game loop -- */
+
+function addScore(t, points) { t.score += points; }   /* a double is exact far past any game */
+
+function spawn(t) {
+  t.block = t.next; t.rot = 0; t.x = COLS / 2 - 2; t.y = 0;
+  t.next = selectRandomBlock(t);
+}
+
+function tetrisInit(seed) {
+  const t = {
+    map: new Int8Array(ROWS * COLS), state: ST_FIRSTBLOCK, block: 0, rot: 0, next: 0, x: 0, y: 0,
+    frame: 0, speed: 20, clearflashcount: 0, score: 0, lines: 0, level: 1,
+    linestat: [0, 0, 0, 0], warpcount: 0, ticks: 0, levelup_ticks: 0,
+    keys: { left: 0, right: 0, rot_left: 0, rot_right: 0, fast_down: 0, warp_down: 0 },
+    bag: new Uint8Array(PIECES), bagindex: PIECES, rng: (seed >>> 0) || 0x2545F491,
+    ai_active: 1, ai_superfast: 0, ai_blunder: 0, ai_state: AI_THINK, ai_x: 0, ai_rot: 0,
+    tetris_play: 0, nbeam: 0, refined: 0, ai_best: AI_NO_MOVE, beam: [],
+  };
+  for (let k = 0; k < AI_BEAM; k++)
+    t.beam.push({ score: 0, pieces: 0, x: 0, rot: 0, board: new Uint16Array(ROWS) });
+  t.next = selectRandomBlock(t);
+  spawn(t);
+  return t;
+}
+
+function stateNormal(t) {
+  const rotsave = t.rot, nrot = ROTATIONS[t.block];
+  let xshift = 0, yoffset = 0;
+  if (t.ai_active) aiRun(t);
+  if (t.keys.left) xshift -= 1;
+  if (t.keys.right) xshift += 1;
+  if (xshift !== 0 && !collides(t.map, t.block, t.rot, t.x + xshift, t.y)) t.x += xshift;
+  if (t.keys.rot_left) t.rot += 1;
+  if (t.keys.rot_right) t.rot += nrot - 1;
+  t.rot %= nrot;
+  if (t.rot !== rotsave && t.block !== 3) {
+    const k = kickRotation(t.map, t.block, rotsave, t.rot, t.x, t.y);
+    if (k) { t.x = k.x; t.y = k.y; } else t.rot = rotsave;
+  }
+  if (t.keys.warp_down) {
+    const gy = ghostPos(t.map, t.block, t.rot, t.x, t.y);
+    if (gy !== t.y && gy > 0) { addScore(t, gy - t.y); t.warpcount++; t.y = gy; t.frame = 0; }
+  }
+  if (t.frame === 0 || t.keys.fast_down) yoffset = 1;
+  if (!collides(t.map, t.block, t.rot, t.x, t.y + yoffset)) {
+    t.y += yoffset;
+    t.state = ST_NORMAL;
+    return;
+  }
+  if (t.state === ST_FIRSTBLOCK && t.y < 1) { t.state = ST_GAMEOVER; return; }
+  stamp(t.map, t.block, t.rot, t.x, t.y);
+  const cur = flashCompleteLines(t.map);
+  if (cur > 0) {
+    t.linestat[cur - 1]++;
+    t.lines += cur;
+    addScore(t, t.level * LINESCORE[cur - 1]);
+    let nl = Math.floor(t.lines / 10) + 1;
+    if (nl > MAX_LEVEL) nl = MAX_LEVEL;
+    if (nl > t.level) t.levelup_ticks = LEVELUP_TICKS;
+    t.level = nl;
+    t.speed = 21 - t.level;
+    t.state = ST_CLEARLINES;
+    t.clearflashcount = cur * FLASH_COUNT;
+    t.frame = 0;
+  } else {
+    t.state = ST_FIRSTBLOCK;
+  }
+  spawn(t);
+  t.keys.fast_down = 0;
+}
+
+function stateClearLines(t) {
+  const lines = flashCompleteLines(t.map);
+  t.clearflashcount--;
+  if (t.clearflashcount < 0) {
+    clearBottomLine(t.map);
+    t.clearflashcount = lines * FLASH_COUNT;
+    if (lines <= 1) t.state = ST_FIRSTBLOCK;
+  }
+}
+
+function tetrisTick(t) {
+  if (t.state === ST_GAMEOVER) return;
+  t.ticks++;
+  if (t.levelup_ticks > 0) t.levelup_ticks--;
+  if (++t.frame > t.speed) t.frame = 0;
+  if (t.state === ST_FIRSTBLOCK || t.state === ST_NORMAL) stateNormal(t);
+  else if (t.state === ST_CLEARLINES) stateClearLines(t);
+  const k = t.keys;
+  k.left = k.right = k.rot_left = k.rot_right = k.warp_down = 0;
+}
+
+/* --------------------------------------------- line clear effects (fx) -- */
+
+const FX_MS = [0, 0, 720, 720, 1280];
+const FX_WARM = 0xFFBE46, FX_COOL = 0x46BEFF, FX_INK = 0x2A1A08, FX_RAINBOW = 0xFF6464;
+
+function fxLinesCleared(fx, lines, now) {
+  if (lines < 2) return;
+  if (lines > 4) lines = 4;
+  if (fx.lines > lines && now - fx.start < FX_MS[fx.lines]) return;
+  fx.start = now; fx.lines = lines;
+}
+
+function ramp(t, t0, t1, t2, t3) {
+  let x;
+  if (t <= t0 || t >= t3) return 0;
+  if (t < t1) x = Math.floor((t - t0) * 256 / (t1 - t0));
+  else if (t <= t2) return 256;
+  else x = Math.floor((t3 - t) * 256 / (t3 - t2));
+  return (x * x * (768 - 2 * x)) >>> 16;
+}
+function ch(c, s) { return (c >>> s) & 0xFF; }
+function mix(c, d, a) {
+  let out = 0;
+  for (let s = 0; s <= 16; s += 8) out |= (((ch(c, s) * (256 - a) + ch(d, s) * a) >>> 8) << s);
+  return out;
+}
+function screen(c, t) {
+  let out = 0;
+  for (let s = 0; s <= 16; s += 8)
+    out |= ((255 - Math.floor((255 - ch(c, s)) * (255 - ch(t, s)) / 255)) << s);
+  return out;
+}
+function hue(c, phase) {
+  const r = ch(c, 16), g = ch(c, 8), b = ch(c, 0);
+  const p = [c, (b << 16) | (r << 8) | g, (g << 16) | (b << 8) | r];
+  const s = (phase >>> 8) % 3;
+  return mix(p[s], p[(s + 1) % 3], phase & 0xFF);
+}
+function textness(c) {
+  const r = ch(c, 16), g = ch(c, 8), b = ch(c, 0);
+  const hi = Math.max(r, g, b), lo = Math.min(r, g, b);
+  const luma = (r * 77 + g * 150 + b * 29) >>> 8;
+  if (luma <= 95 || hi - lo >= 16) return 0;
+  const w = luma >= 140 ? 256 : Math.floor((luma - 95) * 256 / 45);
+  return Math.floor(w * (16 - (hi - lo)) / 16);
+}
+
+/* The colour transform of the running effect at now, or null for none.
+ * ink: for text, which turns dark on the lit picture. The board has one
+ * palette for everything and tells text by its colour; here tiles and
+ * background never get the ink, so a whitened flashing line stays white. */
+function fxTransform(fx, now, ink) {
+  const t = now - fx.start;
+  if (fx.lines === 0 || t >= FX_MS[fx.lines]) return null;
+  let env, light, lightC;
+  if (fx.lines <= 3) {
+    env = ramp(t, 0, 120, 280, 720);
+    light = (env * 160) >>> 8;
+    lightC = fx.lines === 2 ? FX_WARM : FX_COOL;
+  } else {
+    /* A pastel light going once round the colour wheel. */
+    env = ramp(t, 0, 160, 960, 1280);
+    light = (env * 150) >>> 8;
+    lightC = mix(hue(FX_RAINBOW, Math.floor(t * 768 / 1280)), 0xFFFFFF, 128);
+  }
+  const cache = new Map();
+  return function (c0) {
+    let c = cache.get(c0);
+    if (c !== undefined) return c;
+    const k = ink ? textness(c0) : 0;
+    c = c0;
+    if (light !== 0) c = mix(c, screen(c, lightC), light);
+    if (k !== 0) c = mix(c, FX_INK, (k * env) >>> 8);
+    cache.set(c0, c);
+    return c;
+  };
+}
+
+/* Slam (fx_slam() / fx_shake()): a big clear pulls the picture down and
+ * lets it spring back, like on a rubber band. Thousandths of the amplitude
+ * every 25 ms; the board shows every other point, here it is smooth. */
+const SLAM = [0, 700, 1000, 850, 550, 250, 0, -150, -200, -150, -80, -20, 0];
+const SLAM_STEP = 25, SLAM_MS = SLAM_STEP * (SLAM.length - 1);
+
+function fxSlam(fx, lines, hard, human, now) {
+  let amp;
+  if (lines >= 4) amp = hard ? 80 : 50;
+  else if (lines === 3) amp = hard ? 40 : 25;
+  else if (human && hard) amp = 8;
+  else return;
+  if (now - fx.slam_ms < SLAM_MS && amp < fx.slam_amp) return;
+  fx.slam_ms = now; fx.slam_amp = amp;
+}
+
+/* Pixels (of the board's 240x320) the picture is pulled down at now. */
+function fxShake(fx, now) {
+  const t = now - fx.slam_ms;
+  if (!fx.slam_amp || t < 0 || t >= SLAM_MS) return 0;
+  const i = Math.floor(t / SLAM_STEP), f = (t - i * SLAM_STEP) / SLAM_STEP;
+  return (SLAM[i] + (SLAM[i + 1] - SLAM[i]) * f) * fx.slam_amp / 10000;
+}
+
+/* ---------------------------------------------------- the ornament -- */
+
+const GAMEOVER_MS = 8000;
+const REPEAT_DELAY_MS = 250, REPEAT_MS = 100, TAKEOVER_GUARD_MS = 1000;
+const KEY_LEFT = 1, KEY_RIGHT = 2, KEY_CW = 3, KEY_CCW = 4, KEY_SOFT = 5, KEY_HARD = 6;
+const UNDO_DEPTH = 50;   /* pieces a human can go back */
+
+function nextSeed(a) {
+  let x = a.rng;
+  x ^= x << 13; x >>>= 0;
+  x ^= x >>> 17;
+  x ^= x << 5; x >>>= 0;
+  a.rng = x;
+  return x;
+}
+
+function newGame(a, human) {
+  a.game = tetrisInit(nextSeed(a));
+  a.game.ai_blunder = a.blunder;
+  a.game.ai_superfast = a.fast ? 1 : 0;
+  a.game.ai_active = human ? 0 : 1;
+  a.human = !!human;
+  a.best_before = human ? a.hs.human_best : a.hs.best_score;
+  a.lines_before = human ? a.hs.human_lines : a.hs.best_lines;
+  a.game_over = false;
+  a.new_record = false;
+  a.hold = 0;
+  a.soft = false;
+  a.undo = [];
+  a.undos = 0;
+  if (human) pushUndo(a);
+}
+
+/* Undo, for a human only. The game as each piece appeared, so that the
+ * piece can be placed again. With the randomizer in the snapshot the same
+ * pieces come again, and score and lines go back too. */
+function cloneGame(t) {
+  return Object.assign({}, t, {
+    map: t.map.slice(), bag: t.bag.slice(), linestat: t.linestat.slice(),
+    keys: { left: 0, right: 0, rot_left: 0, rot_right: 0, fast_down: 0, warp_down: 0 },
+  });
+}
+function pushUndo(a) {
+  a.undo.push(cloneGame(a.game));
+  if (a.undo.length > UNDO_DEPTH) a.undo.shift();
+}
+/* Back to where the last placed piece appeared. Also from the game over
+ * screen of a human's game. Returns whether there was anything to undo. */
+function appUndo(a) {
+  if (!a.human || a.undo.length === 0) return false;
+  const t = a.game, top = a.undo[a.undo.length - 1];
+  /* A snapshot is taken as the next piece comes in, which the game does
+   * right when a piece locks, before any lines flash. If the top one is
+   * still the piece in play (same place in the bag), go one further back. */
+  if (top.bagindex === t.bagindex && top.rng === t.rng) {
+    if (a.undo.length < 2) return false;
+    a.undo.pop();
+  }
+  if (a.game_over) { a.game_over = false; a.hs.games--; a.dirty = true; }
+  a.game = cloneGame(a.undo[a.undo.length - 1]);
+  a.hold = 0;
+  a.soft = false;
+  a.undos++;
+  return true;
+}
+
+function appInit(seed, blunder, hs) {
+  const a = {
+    hs: Object.assign({ best_score: 0, best_lines: 0, games: 0, human_best: 0, human_lines: 0 }, hs || {}),
+    rng: 1, blunder: blunder | 0, fast: false, now: 0,
+    game: null, game_over: false, over_since: 0, new_record: false, human: false,
+    hold: 0, hold_since: 0, repeat_at: 0, soft: false,
+    best_before: 0, lines_before: 0,
+    fx: { start: 0, lines: 0, slam_ms: 0, slam_amp: 0 }, dirty: false,
+  };
+  a.rng = ((seed >>> 0) ^ Math.imul(a.hs.games, 0x9E3779B9)) >>> 0 | 1;
+  newGame(a, false);
+  return a;
+}
+
+function takeScore(a) {
+  if (a.human) {
+    if (a.game.score > a.hs.human_best) {
+      a.hs.human_best = a.game.score;
+      a.hs.human_lines = a.game.lines;
+      a.dirty = true;
+    }
+    return;
+  }
+  if (a.game.score > a.hs.best_score) {
+    a.hs.best_score = a.game.score;
+    a.hs.best_lines = a.game.lines;
+    a.dirty = true;
+  }
+}
+
+/* A key of a human player. While the AI plays (or on the game over
+ * screen) the first press takes over and starts a game, as touch does on
+ * the board. Returns whether the key belongs to the game. */
+function appInput(a, key, down) {
+  if (!a.human || a.game_over) {
+    if (!down) return true;
+    if (a.game_over && a.now - a.over_since < TAKEOVER_GUARD_MS) return true;
+    newGame(a, true);
+    return true;
+  }
+  const k = a.game.keys;
+  if (key === KEY_LEFT || key === KEY_RIGHT) {
+    if (down && a.hold !== key) {
+      a.hold = key; a.hold_since = a.now; a.repeat_at = a.now;
+      if (key === KEY_LEFT) k.left = 1; else k.right = 1;
+    } else if (!down && a.hold === key) {
+      a.hold = 0;
+    }
+  } else if (key === KEY_SOFT) {
+    a.soft = down;
+  } else if (down) {
+    if (key === KEY_CW) k.rot_left = 1;      /* rotation index + 1 */
+    if (key === KEY_CCW) k.rot_right = 1;
+    if (key === KEY_HARD) k.warp_down = 1;
+  }
+  return true;
+}
+
+function appTick(a) {
+  a.now += TICK_MS;
+  if (a.game_over) {
+    if (a.now - a.over_since >= GAMEOVER_MS) newGame(a, false);
+    return;
+  }
+  if (a.human) {
+    const k = a.game.keys;
+    /* Held left/right: first repeat after the delay, then every period. */
+    if (a.hold && a.now - a.hold_since >= REPEAT_DELAY_MS && a.now - a.repeat_at >= REPEAT_MS) {
+      a.repeat_at = a.now;
+      if (a.hold === KEY_LEFT) k.left = 1; else k.right = 1;
+    }
+    k.fast_down = a.soft ? 1 : 0;
+  }
+  const lines = a.game.lines, warps = a.game.warpcount, bag = a.game.bagindex;
+  tetrisTick(a.game);
+  if (a.human && a.game.bagindex !== bag && a.game.state !== ST_GAMEOVER) pushUndo(a);
+  const cleared = a.game.lines - lines;
+  if (cleared > 0) fxLinesCleared(a.fx, cleared, a.now);
+  fxSlam(a.fx, cleared, a.game.warpcount !== warps, a.human, a.now);
+  if (a.game.state === ST_GAMEOVER) {
+    a.game_over = true;
+    a.over_since = a.now;
+    a.new_record = a.game.score > a.best_before;
+    a.hs.games++;
+    a.dirty = true;
+    takeScore(a);
+  } else if (a.game.score > a.hs.best_score && a.game.ticks % 1200 === 0) {
+    takeScore(a);   /* once a minute while ahead */
+  }
+}
+
+function appSetFast(a, on) {
+  a.fast = on;
+  a.game.ai_superfast = on ? 1 : 0;
+}
+
+/* ===================================================================== */
+/* CORE END                                                              */
+/* ===================================================================== */
+
+if (typeof document !== "undefined") (function () {
+
+/* The music, MP3, filled in from art/sound/ by tools/gen_web.py. The sound
+ * effects are synthesized, see below. */
+const SOUND = {
+@SOUND@
+};
+
+
+/* Layout of the board's 240x320 panel, in its pixels (game/render.c). */
+const W = 240, H = 320, TILE = 15, FIELD_Y = 20, FIELD_W = COLS * TILE;
+const PANEL_X = FIELD_W + 1, PANEL_W = W - PANEL_X, PAD = 6;
+const PREVIEW_BOX = 4 * TILE + 4, PREVIEW_X = PANEL_X + Math.floor((PANEL_W - PREVIEW_BOX) / 2), PREVIEW_Y = 37;
+const VALUE_Y = [122, 156, 190, 224, 258];
+const VALUE_LABEL = ["SCORE", "LINES", "LEVEL", "TIME", "GAME"];
+const TAG_Y = H - 38;
+const INFOTEXT = "zwiener.org";
+
+const C_WHITE = 0xFFFFFF, C_LABEL = 0x969696, C_GOLD = 0xF0C85A, C_RED = 0xFF2828,
+      C_GREEN = 0x5AE65A, C_FRAME = 0x505050, C_BLACK = 0, C_INFO = 0x5A5A5A;
+
+/* Tile colours of tetromino.js: base, high, low, the white of a flashing
+ * line, and the grey of the ghost (index 0..6 = I J L O S T Z). */
+const COL = [0xB5D45D, 0x486793, 0xDFB062, 0xA7498D, 0xDFCA62, 0x4FB34F, 0xDF6262];
+const COL_L = [0x91AF3A, 0x2C4D79, 0xB88A3D, 0x892D70, 0xB8A33D, 0x319331, 0xB83D3D];
+const COL_H = [0xC6DF7E, 0x6986AE, 0xE7C183, 0xBD6BA6, 0xE7D683, 0x70C670, 0xE78383];
+const COL_S = 0xF0F0F0, COL_GHOST = 0x787878;
+
+const FONT = '"DejaVu Sans", Verdana, "Segoe UI", system-ui, sans-serif';
+const F_TINY = 8, F_SMALL = 10, F_BIG = 14, F_HUGE = 19;
+
+const canvas = document.getElementById("screen");
+const ctx = canvas.getContext("2d", { alpha: false });
+/* St. Basil's as vector paths, filled in from art/basi.svg by
+ * tools/gen_web.py: potrace output, the dark around the church, the church
+ * the holes. Coordinates as in its <g>: y up, a tenth of the viewBox units,
+ * which is 1000 wide and 2200 high, the whole field with the hidden rows. */
+const BASI = [@BASI_SVG@];
+const BASI_W = 1000, BASI_H = 2200;
+
+/* --- state of the page ------------------------------------------------ */
+
+function loadHs() {
+  try {
+    const s = JSON.parse(localStorage.getItem("tetromino-ai") || "null");
+    if (s && typeof s.best_score === "number") return s;
+  } catch (e) { /* storage blocked: start fresh */ }
+  return null;
+}
+function saveHs(a) {
+  if (!a.dirty) return;
+  a.dirty = false;
+  try {
+    localStorage.setItem("tetromino-ai", JSON.stringify({
+      best_score: a.hs.best_score, best_lines: a.hs.best_lines, games: a.hs.games,
+      human_best: a.hs.human_best, human_lines: a.hs.human_lines, fast: a.fast }));
+  } catch (e) { /* not kept, never mind */ }
+}
+
+const params = new URLSearchParams(location.search);
+let shakeY = 0;   /* device pixels the picture is pulled down by, this frame */
+const seedParam = parseInt(params.get("seed"), 10);
+const seed = Number.isFinite(seedParam) ? seedParam
+  : (crypto.getRandomValues(new Uint32Array(1))[0] | 1);
+const hs0 = loadHs();
+const app = appInit(seed, Math.max(0, Math.min(1000, parseInt(params.get("blunder"), 10) || 0)), hs0);
+if (hs0 && hs0.fast) appSetFast(app, true);
+
+/* --- geometry ------------------------------------------------------------ */
+
+let dpr = 1, cs = 15, sc = 1, ox = 0, oy = 0, dirtyAll = true;
+
+function resize() {
+  dpr = Math.min(window.devicePixelRatio || 1, 4);
+  const cw = Math.max(1, Math.round(canvas.clientWidth * dpr));
+  const chh = Math.max(1, Math.round(canvas.clientHeight * dpr));
+  if (canvas.width !== cw || canvas.height !== chh) { canvas.width = cw; canvas.height = chh; }
+  /* Whole device pixels per tile, so the grid stays crisp at any size. */
+  const fit = Math.min(cw / W, chh / H) * 0.96;
+  cs = Math.max(4, Math.floor(fit * TILE));
+  sc = cs / TILE;
+  ox = Math.round((cw - W * sc) / 2);
+  oy = Math.round((chh - H * sc) / 2);
+  tileCache.clear();
+  dirtyAll = true;
+}
+
+const X = (x) => ox + Math.round(x * sc);
+const Y = (y) => oy + shakeY + Math.round(y * sc);
+
+function rgb(c) { return "#" + (c & 0xFFFFFF).toString(16).padStart(6, "0"); }
+
+/* --- tiles, drawn like tetromino.js at the real pixel size ------------- */
+
+/* Plain tiles are kept until the size changes. Tiles through an effect
+ * are made once per frame (fxTiles is emptied at the start of each). */
+const tileCache = new Map(), fxTiles = new Map();
+function tileCanvas(key, base, high, low, tf) {
+  const cache = tf ? fxTiles : tileCache;
+  let c = cache.get(key);
+  if (c) return c;
+  c = document.createElement("canvas");
+  c.width = c.height = cs;
+  const g = c.getContext("2d");
+  const T = tf || ((v) => v);
+  const tw = cs, r = tw / 6, lw = Math.max(1, tw / 25);
+  g.clearRect(0, 0, tw, tw);
+  g.fillStyle = rgb(T(base));
+  g.fillRect(0, 0, tw, tw);
+  const grad = g.createLinearGradient(r, r, tw - r, tw - r);
+  grad.addColorStop(0, rgb(T(high)));
+  grad.addColorStop(1, rgb(T(low)));
+  g.fillStyle = grad;
+  g.fillRect(r, r, tw - 2 * r, tw - 2 * r);
+  g.lineWidth = lw;
+  const h = lw / 2;
+  for (let j = 0; j < 2; j++) {
+    const a = j * r + h, b = tw - j * r - h;
+    g.strokeStyle = rgb(T(low));
+    g.beginPath(); g.moveTo(a, b); g.lineTo(b, b); g.lineTo(b, a); g.stroke();
+    g.strokeStyle = rgb(T(high));
+    g.beginPath(); g.moveTo(a, b); g.lineTo(a, a); g.lineTo(b, a); g.stroke();
+  }
+  cache.set(key, c);
+  return c;
+}
+function tileFor(v, tf) {
+  if (v > 0) return tileCanvas("t" + v, COL[v - 1], COL_H[v - 1], COL_L[v - 1], tf);
+  /* Flashing line: high, low and white, as tetromino.js draws it. */
+  return tileCanvas("f" + -v, COL_H[-v - 1], COL_L[-v - 1], COL_S, tf);
+}
+/* The ghost: the bevel of the real tiles, in grey, drawn half transparent. */
+function ghostTile(tf) { return tileCanvas("g", COL_GHOST, 0x9C9C9C, 0x585858, tf); }
+
+/* --- background: St. Basil's, grey, through the effect when one runs --- */
+
+/* Two greys: the field and the church on it. */
+const BG_FIELD = 0x000000, BG_CHURCH = 0x1a1a1a;
+
+/* The church as coverage (alpha) at the size of the visible field in device
+ * pixels, drawn from the paths whenever that size changes, so it is sharp
+ * at any size. Then once more in the colour of the church, again only when
+ * that colour changes: every frame of an effect, otherwise never. */
+let basiPaths = null;
+const bgMask = document.createElement("canvas"), bgTint = document.createElement("canvas");
+let bgTintColor = -1;
+function bgLayer(w, h, color) {
+  if (bgMask.width !== w || bgMask.height !== h) {
+    if (!basiPaths) basiPaths = BASI.map((d) => new Path2D(d));
+    bgMask.width = bgTint.width = w; bgMask.height = bgTint.height = h;
+    const g = bgMask.getContext("2d");
+    g.fillStyle = "#fff";
+    g.fillRect(0, 0, w, h);
+    /* Paths to pixels: the view box over the whole field, its hidden rows
+     * above the top edge. */
+    const k = w / BASI_W, top = k * BASI_H * HIDDEN_ROWS / ROWS;
+    g.setTransform(k * 0.1, 0, 0, -k * 0.1, 0, k * BASI_H - top);
+    g.globalCompositeOperation = "destination-out";
+    for (const p of basiPaths) g.fill(p);
+    bgTintColor = -1;
+  }
+  if (color !== bgTintColor) {
+    const g = bgTint.getContext("2d");
+    g.globalCompositeOperation = "copy";
+    g.drawImage(bgMask, 0, 0);
+    g.globalCompositeOperation = "source-in";
+    g.fillStyle = rgb(color);
+    g.fillRect(0, 0, w, h);
+    bgTintColor = color;
+  }
+  return bgTint;
+}
+
+/* --- text ---------------------------------------------------------------- */
+
+function font(px) { return "bold " + (px * sc).toFixed(2) + "px " + FONT; }
+function textW(px, s) { ctx.font = font(px); return ctx.measureText(s).width / sc; }
+
+/* Text with its box top at y, like the board's renderer, with its half
+ * transparent drop shadow. align: "left" | "right" | "center". */
+function text(px, x, y, s, c, align, tf) {
+  ctx.font = font(px);
+  ctx.textAlign = align || "left";
+  ctx.textBaseline = "alphabetic";
+  const by = y + px * 0.86;
+  ctx.fillStyle = "rgba(" + [16, 8, 0].map((sh) => ch(tf(C_BLACK), sh)).join(",") + ",0.5)";
+  ctx.fillText(s, X(x + 1), Y(by + 1));
+  ctx.fillStyle = rgb(tf(c));
+  ctx.fillText(s, X(x), Y(by));
+}
+
+function fmtNum(v) { return Math.floor(v).toLocaleString("en-US"); }
+function fmtShort(v) {
+  const units = ["k", "M", "G", "T", "P", "E"];
+  if (v < 10000) return fmtNum(v);
+  let div = 1000, u = 0;
+  while (u < 5 && Math.floor(v / div) >= 1000) { div *= 1000; u++; }
+  const whole = Math.floor(v / div), rem = v - whole * div;
+  let s = String(whole);
+  if (whole < 100) {
+    const frac = whole < 10 ? Math.floor(rem / (div / 100)) : Math.floor(rem / (div / 10));
+    s += "." + (whole < 10 ? String(frac).padStart(2, "0") : String(frac));
+  }
+  return s + units[u];
+}
+/* As large as fits into w: full big, full small, short big, short small. */
+function fitNum(prefix, v, suffix, w, big) {
+  let s = prefix + fmtNum(v) + suffix;
+  if (textW(big, s) <= w) return [big, s];
+  if (textW(F_SMALL, s) <= w) return [F_SMALL, s];
+  s = prefix + fmtShort(v) + suffix;
+  if (textW(big, s) <= w) return [big, s];
+  return [F_SMALL, s];
+}
+function fmtTime(ticks) {
+  const sec = Math.floor(ticks / (1000 / TICK_MS));
+  const h = Math.floor(sec / 3600), m = Math.floor(sec / 60) % 60, s = sec % 60;
+  const p2 = (n) => String(n).padStart(2, "0");
+  return h > 0 ? h + ":" + p2(m) + ":" + p2(s) : m + ":" + p2(s);
+}
+
+/* --- frame --------------------------------------------------------------- */
+
+function rect(x, y, w, h, c, tf) {
+  ctx.fillStyle = rgb(tf(c));
+  ctx.fillRect(X(x), Y(y), X(x + w) - X(x), Y(y + h) - Y(y));
+}
+function vgrad(x, y, w, h, c0, c1, tf) {
+  const g = ctx.createLinearGradient(0, Y(y), 0, Y(y + h));
+  g.addColorStop(0, rgb(tf(c0 * 0x010101)));
+  g.addColorStop(1, rgb(tf(c1 * 0x010101)));
+  ctx.fillStyle = g;
+  ctx.fillRect(X(x), Y(y), X(x + w) - X(x), Y(y + h) - Y(y));
+}
+
+let lastShake = 0;
+function render(shake) {
+  const a = app, t = a.game;
+  shakeY = Math.round(shake * sc);
+  if (shakeY !== lastShake) dirtyAll = true;   /* the card moves: the page behind it too */
+  lastShake = shakeY;
+  const fxf = fxTransform(a.fx, a.now, false);          /* tiles, background */
+  const tf = fxTransform(a.fx, a.now, true) || ((c) => c);   /* text */
+  const tg = fxf || ((c) => c);
+  fxTiles.clear();
+
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  if (dirtyAll) {
+    /* Outside the panel: the page background shows through. */
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const g = ctx.createRadialGradient(canvas.width / 2, canvas.height * 0.4, 0,
+                                       canvas.width / 2, canvas.height * 0.4, Math.max(canvas.width, canvas.height) * 0.75);
+    g.addColorStop(0, "#191b22"); g.addColorStop(1, "#0b0c0f");
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.save();
+    ctx.shadowColor = "rgba(0,0,0,0.6)";
+    ctx.shadowBlur = 40 * sc;
+    ctx.fillStyle = "#000";
+    ctx.fillRect(X(0), Y(0), X(W) - X(0), Y(H) - Y(0));
+    ctx.restore();
+    dirtyAll = false;
+    if (shakeY !== 0) dirtyAll = true;   /* again next frame, it is still moving */
+  }
+
+  /* Field: background, tiles, ghost, falling piece. */
+  const fx0 = X(0), fy0 = Y(FIELD_Y);
+  {
+    const w = COLS * cs, h = (ROWS - HIDDEN_ROWS) * cs;
+    ctx.fillStyle = rgb(tg(BG_FIELD));
+    ctx.fillRect(fx0, fy0, w, h);
+    ctx.drawImage(bgLayer(w, h, tg(BG_CHURCH)), fx0, fy0);
+  }
+  /* A faint grid under the tiles, as a lowest brightness ("lighten"): seen
+   * on the dark field, gone where the church is brighter anyway, instead
+   * of lightening it in uneven stripes. Grey level 12, as on the board. */
+  {
+    const lw = Math.max(1, Math.round(cs / 30)), rows = ROWS - HIDDEN_ROWS;
+    ctx.globalCompositeOperation = "lighten";
+    ctx.fillStyle = rgb(tg(12 * 0x010101));
+    for (let c = 1; c < COLS; c++) ctx.fillRect(fx0 + c * cs - lw, fy0, lw, rows * cs);
+    for (let r = 1; r < rows; r++) ctx.fillRect(fx0, fy0 + r * cs - lw, COLS * cs, lw);
+    ctx.globalCompositeOperation = "source-over";
+  }
+  const cell = (r, c) => [fx0 + c * cs, fy0 + (r - HIDDEN_ROWS) * cs];
+  for (let r = HIDDEN_ROWS; r < ROWS; r++)
+    for (let c = 0; c < COLS; c++) {
+      const v = t.map[r * COLS + c];
+      if (v === 0) continue;
+      const [px, py] = cell(r, c);
+      ctx.drawImage(tileFor(v, fxf), px, py);
+    }
+  if (t.state === ST_FIRSTBLOCK || t.state === ST_NORMAL) {
+    const n = SIZE[t.block];
+    const gy = ghostPos(t.map, t.block, t.rot, t.x, t.y);
+    const ga = Math.floor(255 * (Math.floor(gy * 50 / ROWS) + 10) / 100) / 255;
+    const gt = ghostTile(fxf);
+    for (let i = 0; i < n; i++)
+      for (let j = 0; j < n; j++) {
+        const v = pieceCell(t.block, t.rot, i, j);
+        if (v === 0) continue;
+        if (gy >= 0 && gy + i >= HIDDEN_ROWS) {
+          const [px, py] = cell(gy + i, t.x + j);
+          ctx.globalAlpha = ga; ctx.drawImage(gt, px, py); ctx.globalAlpha = 1;
+        }
+      }
+    for (let i = 0; i < n; i++)
+      for (let j = 0; j < n; j++) {
+        const v = pieceCell(t.block, t.rot, i, j);
+        if (v === 0 || t.y + i < HIDDEN_ROWS) continue;
+        const [px, py] = cell(t.y + i, t.x + j);
+        ctx.drawImage(tileFor(v, fxf), px, py);
+      }
+  }
+
+  /* Title bar: the grey gradient over the spawn rows, best or level up. */
+  vgrad(0, 0, W, FIELD_Y, 50, 80, tg);
+  const leading = t.score > a.best_before;
+  if (t.levelup_ticks > 0 && t.level > 1) {
+    text(F_BIG, 6, 3, "Level " + t.level + "!", C_WHITE, "left", tf);
+  } else {
+    const best = leading ? t.score : a.best_before, bl = leading ? t.lines : a.lines_before;
+    const xmax = W - 6, x0 = 6, gap = 6;
+    let sf = F_BIG, sbuf = "BEST " + fmtNum(best), lbuf = fmtNum(bl) + " lines";
+    let ws = textW(F_BIG, sbuf), wl = gap + textW(F_SMALL, lbuf), showLines = true;
+    if (x0 + ws + wl > xmax) { sf = F_SMALL; ws = textW(sf, sbuf); }
+    if (x0 + ws + wl > xmax) { lbuf = fmtShort(bl) + " lines"; wl = gap + textW(F_SMALL, lbuf); }
+    if (x0 + ws + wl > xmax) showLines = false;
+    if (x0 + ws > xmax) { [sf, sbuf] = fitNum("BEST ", best, "", xmax - x0, F_BIG); ws = textW(sf, sbuf); }
+    text(sf, x0, 3 + (F_BIG - sf) * 0.86, sbuf, C_GOLD, "left", tf);
+    if (showLines) text(F_SMALL, x0 + ws + gap, 3 + (F_BIG - F_SMALL) * 0.86, lbuf, C_LABEL, "left", tf);
+  }
+
+  /* Panel. */
+  vgrad(PANEL_X, FIELD_Y, PANEL_W, H - FIELD_Y, 34, 18, tg);
+  rect(FIELD_W, FIELD_Y, 1, H - FIELD_Y, C_FRAME, tg);
+  const xl = PANEL_X + PAD, xr = W - PAD;
+  text(F_SMALL, xl, 24, "NEXT", C_LABEL, "left", tf);
+  rect(PREVIEW_X - 1, PREVIEW_Y - 1, PREVIEW_BOX + 2, PREVIEW_BOX + 2, C_FRAME, tg);
+  rect(PREVIEW_X, PREVIEW_Y, PREVIEW_BOX, PREVIEW_BOX, C_BLACK, tg);
+  {
+    const b = t.next, n = SIZE[b];
+    let minr = n, maxr = -1, minc = n, maxc = -1;
+    for (let i = 0; i < n; i++)
+      for (let j = 0; j < n; j++)
+        if (pieceCell(b, 0, i, j)) { minr = Math.min(minr, i); maxr = Math.max(maxr, i); minc = Math.min(minc, j); maxc = Math.max(maxc, j); }
+    const px0 = PREVIEW_X + (PREVIEW_BOX - (maxc - minc + 1) * TILE) / 2 - minc * TILE;
+    const py0 = PREVIEW_Y + (PREVIEW_BOX - (maxr - minr + 1) * TILE) / 2 - minr * TILE;
+    for (let i = 0; i < n; i++)
+      for (let j = 0; j < n; j++) {
+        const v = pieceCell(b, 0, i, j);
+        if (v) ctx.drawImage(tileFor(v, fxf), X(px0 + j * TILE), Y(py0 + i * TILE), cs, cs);
+      }
+  }
+  const values = [t.score, t.lines, t.level, t.ticks, a.hs.games + (a.game_over ? 0 : 1)];
+  for (let i = 0; i < 5; i++) {
+    text(F_SMALL, xl, VALUE_Y[i] - 12, VALUE_LABEL[i], C_LABEL, "left", tf);
+    let f, s;
+    if (i === 3) { s = fmtTime(values[3]); f = textW(F_BIG, s) > xr - PANEL_X - 1 ? F_SMALL : F_BIG; }
+    else [f, s] = fitNum(i === 4 ? "#" : "", values[i], "", xr - PANEL_X - 1, F_BIG);
+    text(f, xr, VALUE_Y[i] + (F_BIG - f) * 0.86, s, C_WHITE, "right", tf);
+  }
+  if (a.human) {
+    /* "YOU" until the first undo; by then the player knows, and the line
+     * counts the undos like the values above it. */
+    if (a.undos === 0) {
+      text(F_BIG, xr, TAG_Y, "YOU", C_GREEN, "right", tf);
+    } else {
+      text(F_SMALL, xl, TAG_Y + (F_BIG - F_SMALL) * 0.86, "UNDO", C_LABEL, "left", tf);
+      const [f, us] = fitNum("", a.undos, "", xr - xl - textW(F_SMALL, "UNDO") - 6, F_BIG);
+      text(f, xr, TAG_Y + (F_BIG - f) * 0.86, us, C_WHITE, "right", tf);
+    }
+  }
+  else text(F_BIG, xr, TAG_Y, a.fast ? "AI>" : "AI", C_RED, "right", tf);
+  text(F_TINY, xr, H - 14, INFOTEXT, C_INFO, "right", tf);
+
+  /* Game over card. */
+  if (a.game_over) {
+    const xc = FIELD_W / 2;
+    ctx.fillStyle = "rgba(200,0,0,0.5)";
+    ctx.fillRect(X(0), Y(FIELD_Y), X(FIELD_W) - X(0), Y(H) - Y(FIELD_Y));
+    ctx.fillStyle = "rgba(0,0,0,0.745)";
+    ctx.fillRect(X(4), Y(90), X(FIELD_W - 4) - X(4), Y(228) - Y(90));
+    rect(4, 90, FIELD_W - 8, 1, C_GOLD, tf);
+    rect(4, 227, FIELD_W - 8, 1, C_GOLD, tf);
+    text(F_HUGE, xc, 100, "GAME OVER", C_WHITE, "center", tf);
+    text(F_SMALL, xc, 138, "SCORE", C_WHITE, "center", tf);
+    let [f, s] = fitNum("", t.score, "", FIELD_W - 12, F_BIG);
+    text(f, xc, 150 + (F_BIG - f) * 0.86, s, C_WHITE, "center", tf);
+    if (a.new_record) {
+      if (Math.floor((a.now - a.over_since) / 400) % 2 === 0)
+        text(F_BIG, xc, 186, "NEW RECORD!", C_GOLD, "center", tf);
+    } else {
+      text(F_SMALL, xc, 180, a.human ? "YOUR BEST" : "ALL-TIME BEST", C_GOLD, "center", tf);
+      [f, s] = fitNum("", a.best_before, "", FIELD_W - 12, F_BIG);
+      text(f, xc, 192 + (F_BIG - f) * 0.86, s, C_GOLD, "center", tf);
+      [f, s] = fitNum("", a.lines_before, " lines", FIELD_W - 12, F_SMALL);
+      text(f, xc, 210, s, C_WHITE, "center", tf);
+    }
+  }
+}
+
+/* --- loop: a game step every 50 ms, a frame only after a step ---------- */
+
+let last = 0, acc = 0, need = true, paused = false;
+function loop(ts) {
+  if (!last) last = ts;
+  if (!paused) acc += Math.min(ts - last, 250);   /* after a pause, no catching up */
+  last = ts;
+  let steps = 0;
+  while (acc >= TICK_MS && steps < 5) { tickWithSound(); acc -= TICK_MS; steps++; need = true; }
+  /* Frames at the game's 20 per second, but at the display's rate while
+   * the slam moves the picture, so that it moves smoothly. */
+  const shake = fxShake(app.fx, app.now + acc);
+  if (need || shake !== 0 || lastShake !== 0) { render(shake); need = false; }
+  if (steps && app.now % 60000 === 0) saveHs(app);
+  requestAnimationFrame(loop);
+}
+
+/* --- sound: Web Audio, synthesized effects and the music -------------- */
+
+let soundOn = false, musicOn = false;
+let audio = null, master = null, musicSrc = null;
+let fxIn = null, out = null, verb = null, noiseBuf = null;
+const buffers = {};
+function b64ToBuf(b64) {
+  const bin = atob(b64), u = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+  return u.buffer;
+}
+function audioReady() {
+  if (!audio) {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return false;
+    audio = new AC();
+    master = audio.createGain();
+    master.gain.value = 0.7;
+    master.connect(audio.destination);
+    /* The effects go through a compressor, and some of them into a small
+     * room: decaying noise as impulse response. */
+    const comp = audio.createDynamicsCompressor();
+    comp.threshold.value = -14; comp.ratio.value = 4; comp.attack.value = 0.003; comp.release.value = 0.15;
+    fxIn = audio.createGain();
+    fxIn.connect(comp); comp.connect(master);
+    verb = audio.createConvolver();
+    const len = Math.floor(audio.sampleRate * 1.6), ir = audio.createBuffer(2, len, audio.sampleRate);
+    for (let c = 0; c < 2; c++) {
+      const d = ir.getChannelData(c);
+      for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3.2);
+    }
+    verb.buffer = ir;
+    const vg = audio.createGain(); vg.gain.value = 0.35;
+    verb.connect(vg); vg.connect(fxIn);
+    noiseBuf = audio.createBuffer(1, audio.sampleRate, audio.sampleRate);
+    const nd = noiseBuf.getChannelData(0);
+    for (let i = 0; i < nd.length; i++) nd[i] = Math.random() * 2 - 1;
+  }
+  if (audio.state === "suspended") audio.resume().catch(() => {});
+  return true;
+}
+function buffer(name) {
+  if (!buffers[name]) buffers[name] = audio.decodeAudioData(b64ToBuf(SOUND[name]));
+  return buffers[name];
+}
+
+const note = (n) => 440 * Math.pow(2, (n - 69) / 12);   /* MIDI note to Hz */
+
+/* An envelope on a gain: attack to peak, hold, exponential decay to silence. */
+function env(g, t, peak, attack, decay, hold) {
+  hold = hold || 0;
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.linearRampToValueAtTime(peak, t + attack);
+  if (hold) g.gain.setValueAtTime(peak, t + attack + hold);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + attack + hold + decay);
+}
+function toRoom(g, amount) {
+  const r = audio.createGain(); r.gain.value = amount * out.gain.value; g.connect(r); r.connect(verb);
+}
+
+/* Pulse waves as on the NES and the Game Boy: duty 0.125, 0.25 or 0.5. */
+const pulses = {};
+function pulse(duty) {
+  if (pulses[duty]) return pulses[duty];
+  const N = 64, re = new Float32Array(N), im = new Float32Array(N);
+  for (let n = 1; n < N; n++) re[n] = 2 / (n * Math.PI) * Math.sin(n * Math.PI * duty);
+  return (pulses[duty] = audio.createPeriodicWave(re, im));
+}
+
+/* A tone: type (or pulse duty), frequency (and where it glides to, or a
+ * list of notes stepped through every `step` seconds), level, attack,
+ * hold, decay, optional lowpass, how much goes to the room. */
+function tone(o) {
+  const t = audio.currentTime + (o.at || 0);
+  const osc = audio.createOscillator(), g = audio.createGain();
+  if (o.duty) osc.setPeriodicWave(pulse(o.duty)); else osc.type = o.type || "sine";
+  if (o.seq) o.seq.forEach((f, i) => osc.frequency.setValueAtTime(f, t + i * o.step));
+  else osc.frequency.setValueAtTime(o.f, t);
+  if (o.to) osc.frequency.exponentialRampToValueAtTime(o.to, t + (o.glide || o.decay));
+  env(g, t, o.vol || 0.3, o.attack || 0.003, o.decay || 0.1, o.hold);
+  let node = osc;
+  if (o.lp) { const f = audio.createBiquadFilter(); f.type = "lowpass"; f.frequency.value = o.lp; node.connect(f); node = f; }
+  node.connect(g); g.connect(out);
+  if (o.room) toRoom(g, o.room);
+  osc.start(t); osc.stop(t + (o.attack || 0.003) + (o.hold || 0) + (o.decay || 0.1) + 0.05);
+}
+
+/* Filtered noise: filter type, centre frequency (and sweep), q, level. */
+function noise(o) {
+  const t = audio.currentTime + (o.at || 0);
+  const src = audio.createBufferSource(), f = audio.createBiquadFilter(), g = audio.createGain();
+  src.buffer = noiseBuf; src.loop = true;
+  f.type = o.filter || "bandpass"; f.Q.value = o.q || 1;
+  f.frequency.setValueAtTime(o.f, t);
+  if (o.to) f.frequency.exponentialRampToValueAtTime(o.to, t + (o.glide || o.decay));
+  env(g, t, o.vol || 0.3, o.attack || 0.002, o.decay || 0.05);
+  src.connect(f); f.connect(g); g.connect(out);
+  if (o.room) toRoom(g, o.room);
+  src.start(t); src.stop(t + (o.attack || 0.002) + (o.decay || 0.05) + 0.05);
+}
+
+/* Noise from a Game Boy style 15 bit shift register, a hiss, clocked at
+ * `rate` Hz and gliding to `to`. */
+let lfsrBuf = null;
+function gbnoise(o) {
+  const t = audio.currentTime + (o.at || 0), base = 4000;
+  if (!lfsrBuf) {
+    lfsrBuf = audio.createBuffer(1, audio.sampleRate, audio.sampleRate);
+    const d = lfsrBuf.getChannelData(0);
+    let s = 0x7fff, v = 1, acc = 0;
+    for (let i = 0; i < d.length; i++) {
+      acc += base / audio.sampleRate;
+      while (acc >= 1) {
+        acc -= 1;
+        const bit = (s ^ (s >> 1)) & 1;
+        s = (s >> 1) | (bit << 14);
+        v = (s & 1) ? -1 : 1;
+      }
+      d[i] = v;
+    }
+  }
+  const src = audio.createBufferSource(), g = audio.createGain();
+  src.buffer = lfsrBuf; src.loop = true;
+  src.playbackRate.setValueAtTime(o.rate / base, t);
+  if (o.to) src.playbackRate.exponentialRampToValueAtTime(o.to / base, t + o.decay);
+  env(g, t, o.vol, 0.002, o.decay);
+  src.connect(g); g.connect(out);
+  src.start(t); src.stop(t + o.decay + 0.05);
+}
+
+/* Friction: band passed noise, chopped into grains `grain` times a second,
+ * like stone dragged over stone. */
+function scrape(o) {
+  const t = audio.currentTime;
+  const src = audio.createBufferSource(), f = audio.createBiquadFilter();
+  const am = audio.createGain(), g = audio.createGain();
+  src.buffer = noiseBuf; src.loop = true;
+  f.type = "bandpass"; f.Q.value = o.q;
+  f.frequency.setValueAtTime(o.f, t);
+  f.frequency.exponentialRampToValueAtTime(o.to, t + o.decay);
+  const lfo = audio.createOscillator(), depth = audio.createGain();
+  lfo.type = "sawtooth"; lfo.frequency.setValueAtTime(o.grain, t);
+  lfo.frequency.linearRampToValueAtTime(o.grainTo, t + o.decay);
+  am.gain.value = 0.55; depth.gain.value = 0.45;
+  lfo.connect(depth); depth.connect(am.gain);
+  env(g, t, o.vol, 0.006, o.decay);
+  src.connect(f); f.connect(am); am.connect(g); g.connect(out);
+  const end = t + 0.006 + o.decay + 0.05;
+  src.start(t); lfo.start(t); src.stop(end); lfo.stop(end);
+}
+
+/* The coin: a square wave stepping up E major, one more step per line. */
+const COIN = [[83, 88], [83, 88, 95], [83, 88, 92, 95], [83, 88, 92, 95, 100]];
+const COIN_STEP = 0.065;
+function coin(lines) {
+  const m = COIN[lines - 1];
+  tone({ duty: 0.5, lp: 6000, seq: m.map(note), step: COIN_STEP, vol: 0.07,
+         hold: COIN_STEP * (m.length - 1), decay: lines >= 4 ? 0.3 : 0.38, room: 0.15 });
+}
+
+/* Four lines: the coin up to the octave over a noise crash, then a thin
+ * pulse runs up, slides back, wobbles once and lands on the tonic. */
+function tetromino() {
+  coin(4);
+  gbnoise({ rate: 1600, to: 800, vol: 0.05, decay: 0.2 });
+  const t = audio.currentTime, b = t + COIN_STEP * 4 + 0.12, len = 0.42, v = 0.032;
+  const o = audio.createOscillator(), g = audio.createGain(), f = o.frequency;
+  o.setPeriodicWave(pulse(0.25));
+  f.setValueAtTime(note(78), b); f.linearRampToValueAtTime(note(83), b + 0.12);
+  f.linearRampToValueAtTime(note(78), b + 0.17); f.setValueAtTime(note(78), b + 0.25);
+  f.linearRampToValueAtTime(note(79), b + 0.28); f.linearRampToValueAtTime(note(78), b + 0.31);
+  f.exponentialRampToValueAtTime(note(76), b + 0.40);
+  /* it stops at full level, as on the Game Boy, with a short fade
+   * against the click, and dry, so nothing rings on */
+  g.gain.setValueAtTime(0.0001, t); g.gain.setValueAtTime(v, b);
+  g.gain.setValueAtTime(v, b + len - 0.012); g.gain.linearRampToValueAtTime(0.0001, b + len);
+  o.connect(g); g.connect(out);
+  o.start(b); o.stop(b + len + 0.05);
+}
+
+const SFX = {
+  move: () => tone({ f: 1800, vol: 0.10, decay: 0.012 }),
+  rotate: () => {
+    scrape({ f: 1600, to: 2800, q: 4, grain: 140, grainTo: 200, vol: 0.26, decay: 0.05 });
+    noise({ at: 0.048, f: 3200, q: 8, vol: 0.18, decay: 0.01 });
+  },
+  lock: () => { noise({ f: 3000, q: 4, vol: 0.18, decay: 0.012 }); tone({ f: 120, to: 60, vol: 0.4, decay: 0.08 }); },
+  hard: () => {
+    noise({ f: 3500, q: 6, vol: 0.2, decay: 0.01 });
+    tone({ f: 70, to: 40, vol: 0.8, decay: 0.32 });
+    tone({ type: "triangle", f: 140, to: 70, vol: 0.2, decay: 0.12 });
+  },
+  clear: coin,
+  tetromino,
+  levelup: () => [0, 4, 7, 12, 16].forEach((s, i) =>
+    tone({ at: i * 0.07, type: "square", lp: 2500, f: note(72 + s), vol: 0.07, decay: 0.18, room: 0.4 })),
+  gameover: () => {
+    tone({ type: "sawtooth", lp: 1200, f: 440, to: 55, vol: 0.12, decay: 0.9, glide: 0.9 });
+    tone({ at: 0.85, f: 55, vol: 0.3, decay: 0.4 });
+  },
+  undo: () => {
+    noise({ f: 300, to: 3500, q: 2, vol: 0.22, attack: 0.12, decay: 0.03 });
+    tone({ at: 0.12, f: 900, to: 600, vol: 0.1, decay: 0.06 });
+  },
+};
+
+/* An effect at a level: its nodes go into a gain of that level. Whatever
+ * the audio does, it must not stop the game loop, which calls this. */
+function play(name, vol, arg) {
+  if (!soundOn || !audio || audio.state !== "running") return;
+  try {
+    out = audio.createGain();
+    out.gain.value = vol === undefined ? 1 : vol;
+    out.connect(fxIn);
+    SFX[name](arg);
+  } catch (e) {
+    console.error("sound " + name, e);
+  }
+}
+function music(on) {
+  if (!on) { if (musicSrc) { musicSrc.stop(); musicSrc = null; } return; }
+  if (musicSrc || !audioReady()) return;
+  musicSrc = { stop() { this.dead = true; } };   /* placeholder while decoding */
+  const ph = musicSrc;
+  buffer("music").then((buf) => {
+    if (ph.dead) return;
+    const src = audio.createBufferSource(), g = audio.createGain();
+    src.buffer = buf; src.loop = true; g.gain.value = 1;
+    src.connect(g); g.connect(master); src.start();
+    musicSrc = src;
+  }).catch(() => { musicSrc = null; });
+}
+
+/* One game step, and the sounds for what it did. The AI plays its pieces
+ * quieter than a human; the slam of a hard drop is a human's only, the AI
+ * in fast mode drops every piece that way. */
+function tickWithSound() {
+  const g = app.game;
+  const before = { x: g.x, rot: g.rot, y: g.y, lines: g.lines, level: g.level, bag: g.bagindex,
+                   next: g.next, state: g.state, warps: g.warpcount, human: app.human };
+  appTick(app);
+  if (before.human && app.game_over && before.state !== ST_GAMEOVER)
+    toast("Game over · a key plays again · the AI goes on in " + GAMEOVER_MS / 1000 + " s", GAMEOVER_MS - 500);
+  if (!soundOn || app.game !== g) return;
+  const cleared = g.lines - before.lines;
+  if (g.state === ST_GAMEOVER && before.state !== ST_GAMEOVER) { play("gameover"); return; }
+  if (g.bagindex !== before.bag || g.next !== before.next) {
+    if (before.human && g.warpcount !== before.warps) play("hard");
+    else play("lock", before.human ? 1 : 0.6);
+  }
+  if (cleared >= 4) play("tetromino", 0.9);
+  else if (cleared > 0) play("clear", 0.9, cleared);
+  if (g.level > before.level) play("levelup", 1);
+  if (before.human && g.state === ST_NORMAL) {
+    if (g.x !== before.x) play("move", 0.8);
+    else if (g.rot !== before.rot) play("rotate", 0.8);
+    else if (app.soft && g.y > before.y) play("move", 0.4);
+  }
+}
+
+/* --- page ---------------------------------------------------------------- */
+
+const fastBtn = document.getElementById("fast");
+const fullBtn = document.getElementById("full");
+function setFast(on) {
+  appSetFast(app, on);
+  fastBtn.setAttribute("aria-pressed", on ? "true" : "false");
+  app.dirty = true; saveHs(app); need = true;
+}
+setFast(app.fast);
+fastBtn.addEventListener("click", (e) => { e.stopPropagation(); setFast(!app.fast); });
+
+const root = document.documentElement;
+const canFull = !!(root.requestFullscreen || root.webkitRequestFullscreen);
+if (!canFull) fullBtn.hidden = true;
+function toggleFull() {
+  const fs = document.fullscreenElement || document.webkitFullscreenElement;
+  if (fs) (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+  else if (canFull) (root.requestFullscreen || root.webkitRequestFullscreen).call(root, { navigationUI: "hide" });
+}
+fullBtn.addEventListener("click", (e) => { e.stopPropagation(); toggleFull(); });
+/* Toast: a line of text at the top for a few seconds. */
+const toastEl = document.getElementById("toast");
+let toastTimer = 0;
+function toast(msg, ms) {
+  toastEl.textContent = msg;
+  toastEl.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toastEl.classList.remove("show"), ms || 3500);
+}
+
+const GAME_KEYS = {
+  ArrowLeft: KEY_LEFT, ArrowRight: KEY_RIGHT, ArrowUp: KEY_CW, x: KEY_CW, X: KEY_CW,
+  z: KEY_CCW, Z: KEY_CCW, y: KEY_CCW, Y: KEY_CCW, ArrowDown: KEY_SOFT, " ": KEY_HARD,
+};
+function key(e, down) {
+  const k = (e.ctrlKey || e.metaKey) ? undefined : GAME_KEYS[e.key];
+  if (k !== undefined) {
+    e.preventDefault();
+    if (e.repeat || paused) return;
+    const wasHuman = app.human && !app.game_over;
+    appInput(app, k, down);
+    if (down && !wasHuman && app.human)
+      toast("\u2190 \u2192 move \u00b7 \u2191 / X rotate \u00b7 Z back \u00b7 \u2193 soft \u00b7 Space drop \u00b7 Ctrl+Z undo", 5000);
+    need = true;
+    return;
+  }
+  if (!down || e.repeat || e.altKey) return;
+  if ((e.ctrlKey || e.metaKey) && (e.key === "z" || e.key === "Z")) {
+    e.preventDefault();
+    if (appUndo(app)) { play("undo"); toastEl.classList.remove("show"); need = true; }
+    return;
+  }
+  if (e.ctrlKey || e.metaKey) return;
+  if (e.key === "f" || e.key === "F") toggleFull();
+  if (e.key === "i" || e.key === "I") setFast(!app.fast);
+  if (e.key === "s" || e.key === "S") { setSound(!soundOn); toast(soundOn ? "Sound effects on" : "Sound effects off", 1500); }
+  if (e.key === "m" || e.key === "M") { setMusic(!musicOn); toast(musicOn ? "Music on" : "Music off", 1500); }
+  if (e.key === "p" || e.key === "P") { paused = !paused; toast(paused ? "Paused \u00b7 P to go on" : "", paused ? 1e9 : 1); }
+}
+window.addEventListener("keydown", (e) => key(e, true));
+window.addEventListener("keyup", (e) => key(e, false));
+window.addEventListener("blur", () => { app.hold = 0; app.soft = false; });
+
+/* Sound effects and music, each on its own button. */
+const soundBtn = document.getElementById("sound"), musicBtn = document.getElementById("music");
+function setSound(on) {
+  soundOn = on;
+  document.getElementById("snd-x").style.display = on ? "none" : "";
+  document.getElementById("snd-w1").style.display = on ? "" : "none";
+  document.getElementById("snd-w2").style.display = on ? "" : "none";
+  soundBtn.setAttribute("aria-pressed", on ? "true" : "false");
+  if (on) audioReady();
+  app.dirty = true; saveHs(app);
+}
+function setMusic(on) {
+  musicOn = on;
+  musicBtn.setAttribute("aria-pressed", on ? "true" : "false");
+  music(on);
+  app.dirty = true; saveHs(app);
+}
+soundBtn.addEventListener("click", (e) => {
+  e.stopPropagation();
+  setSound(!soundOn);
+  toast(soundOn ? "Sound effects on" : "Sound effects off", 1500);
+});
+musicBtn.addEventListener("click", (e) => {
+  e.stopPropagation();
+  setMusic(!musicOn);
+  toast(musicOn ? "Music on" : "Music off", 1500);
+});
+/* Sound and music start off on every visit. */
+setSound(false);
+setMusic(false);
+if (window.matchMedia && window.matchMedia("(pointer: fine)").matches)
+  setTimeout(() => toast("Arrow keys: play yourself \u00b7 F fullscreen \u00b7 S sound \u00b7 M music", 4500), 800);
+
+/* Controls and cursor fade out when nothing moves. */
+let idleTimer = 0;
+function wake() {
+  document.body.classList.remove("idle");
+  clearTimeout(idleTimer);
+  idleTimer = setTimeout(() => document.body.classList.add("idle"), 2500);
+}
+["pointermove", "pointerdown", "keydown"].forEach((ev) => window.addEventListener(ev, wake, { passive: true }));
+wake();
+
+/* Keep the screen on while it is watched. */
+let wakeLock = null;
+async function keepAwake() {
+  try { if ("wakeLock" in navigator && !document.hidden) wakeLock = await navigator.wakeLock.request("screen"); }
+  catch (e) { /* not allowed here, fine */ }
+}
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) saveHs(app);
+  else { last = 0; keepAwake(); }
+});
+window.addEventListener("pagehide", () => saveHs(app));
+keepAwake();
+
+new ResizeObserver(() => { resize(); need = true; }).observe(canvas);
+resize();
+requestAnimationFrame(loop);
+})();
+
+if (typeof module !== "undefined") module.exports = { tetrisInit, tetrisTick, appInit, appTick, appInput, appUndo, fxTransform, fxShake };
+</script>
+</body>
+</html>

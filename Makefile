@@ -12,6 +12,7 @@
 #   make sim             build build/sim (see sim/sim.c for its options)
 #   make shots           render a few frames and game over screens to build/shots
 #   make assets          regenerate game/assets.[ch] from art/ (needs Pillow)
+#   make web             regenerate web/tetromino.html from web/src/ and art/
 #   make clean           remove the host build
 #
 # Plain "make" runs the host tests and builds the simulator.
@@ -27,7 +28,7 @@ BUILD   := build
 GAME    := game/tetris.c game/render.c game/assets.c game/hiscore.c game/app.c game/fx.c
 HDRS    := $(wildcard game/*.h sim/*.h)
 
-.PHONY: all test sim shots assets clean firmware flash clean-firmware
+.PHONY: all test sim shots assets web clean firmware flash clean-firmware
 
 all: test sim
 
@@ -64,6 +65,9 @@ shots: $(BUILD)/sim
 
 assets:
 	python3 tools/gen_assets.py
+
+web:
+	python3 tools/gen_web.py
 
 clean:
 	rm -rf $(BUILD)
