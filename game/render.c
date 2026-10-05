@@ -29,6 +29,14 @@
 #define C_GREEN   RGB(90, 230, 90)
 #define C_FRAME   RGB(80, 80, 80)
 
+/* Grey level of the grid lines: at least this bright, as bright as the
+ * background where that is brighter. Seen on the dark field, gone over the
+ * lighter church, instead of lightening it in uneven stripes. */
+#define GRID_LEVEL 12
+
+/* The info text bottom right, quieter than the labels. */
+#define C_INFO    RGB(90, 90, 90)
+
 /* --------------------------------------------------------------------- */
 /* Primitives                                                            */
 /* --------------------------------------------------------------------- */
@@ -446,15 +454,19 @@ static void draw_cell(uint8_t *fb, int row, int col, uint16_t key)
 
     /* Background, grey only. The visible rows start TETRIS_HIDDEN_ROWS
      * tiles into the image, as they do in the browser, where the title bar
-     * covers its top. */
+     * covers its top. The right and bottom edge of every cell at least
+     * GRID_LEVEL: a faint grid on the empty field. */
     for (y = 0; y < TILE; y++) {
         uint8_t *p = fb + (size_t)(py + y) * RENDER_W + (size_t)px;
         const uint8_t *s = asset_bg +
             (size_t)(row * TILE + y + TETRIS_HIDDEN_ROWS * TILE) * ASSET_BG_W +
             (size_t)(col * TILE);
 
-        for (x = 0; x < TILE; x++)
-            p[x] = asset_grey[s[x]];
+        for (x = 0; x < TILE; x++) {
+            const int edge = (x == TILE - 1 || y == TILE - 1);
+
+            p[x] = asset_grey[(edge && s[x] < GRID_LEVEL) ? GRID_LEVEL : s[x]];
+        }
     }
 
     if (v > 0)
@@ -597,7 +609,7 @@ static void draw_infotext(uint8_t *fb, const char *s)
         n++;
     }
     buf[n] = '\0';
-    draw_text_right(fb, &font_small, xr, RENDER_H - 16, buf, C_LABEL);
+    draw_text_right(fb, &font_small, xr, RENDER_H - 16, buf, C_INFO);
 }
 
 /* Who plays, bottom right in the panel above the info text: AI (red, "AI>"

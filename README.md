@@ -13,6 +13,7 @@ stm32f429/   firmware: HAL, BSP, display and glue code
 sim/         host PC simulator
 tests/       test suite
 tools/       gen_assets.py (artwork from art/ -> game/assets.c)
+web/         the game and AI as one standalone web page
 art/         tile sheet and background (input of gen_assets.py)
 ```
 
@@ -81,6 +82,16 @@ make flash DEBUG=1        # probe can attach while running
 - **User button** (B1, blue). Short press: fast drop on or off, the AI
   drops each piece as soon as it is in place.
   Long press (1 s): screen turned by 180 degrees, or back.
+
+## In the browser
+
+`web/tetromino.html` is the same game and AI as a single standalone page,
+ported from the C code (with the same seed it plays the same game as the
+board). Open it in any browser: `F` fullscreen, `I` fast drop, `S` sound
+effects and `M` music (those of the original browser version), `P` pause.
+The arrow keys, `Z`, `X` and Space take over from the AI, which plays
+again after your game over. `Ctrl+Z` takes back the last piece. `?blunder=50` makes the AI drop a piece
+at random now and then.
 
 ## Regenerating the artwork
 

@@ -28,7 +28,7 @@
 static uint8_t s_fb[RENDER_W * RENDER_H];
 
 /* The frame as the panel shows it at now: through the palette of a running
- * line clear effect, shifted by the burn in shift (fx.h). */
+ * line clear effect, shifted by the burn in shift and the slam (fx.h). */
 static void write_ppm(const char *dir, const char *name, uint32_t n,
                       const app_t *app, uint32_t now)
 {
@@ -47,6 +47,7 @@ static void write_ppm(const char *dir, const char *name, uint32_t n,
     fprintf(f, "P6\n%d %d\n255\n", RENDER_W, RENDER_H);
     (void)fx_palette(&app->fx, now, pal);
     fx_shift(now, &dx, &dy);
+    dy += fx_shake(&app->fx, now);
     for (y = 0; y < RENDER_H; y++) {
         for (x = 0; x < RENDER_W; x++) {
             /* through the palette, as the LTDC does it, black where the

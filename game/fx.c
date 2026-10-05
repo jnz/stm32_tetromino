@@ -91,9 +91,10 @@ static uint32_t hue(uint32_t c, uint32_t phase)
     return mix(p[s], p[(s + 1U) % 3U], phase & 0xFFU);
 }
 
-/* How much of a text colour c is, 0..256: light and without much colour,
- * as the white values and grey labels are. Tiles and the gold best score
- * are too colourful, the background too dark. */
+/* How much of a text colour c is, 0..256: light and grey, as the white
+ * values and the grey labels are. Tiles, also the whitened ones of a
+ * flashing line, and the gold best score have too much colour, the
+ * background is too dark. */
 static uint32_t textness(uint32_t c)
 {
     const uint32_t r = ch(c, 16), g = ch(c, 8), b = ch(c, 0);
@@ -102,10 +103,10 @@ static uint32_t textness(uint32_t c)
     const uint32_t luma = (r * 77U + g * 150U + b * 29U) >> 8;
     uint32_t w;
 
-    if (luma <= 95U || hi - lo >= 60U)
+    if (luma <= 95U || hi - lo >= 16U)
         return 0U;
     w = (luma >= 140U) ? 256U : (luma - 95U) * 256U / 45U;
-    return w * (60U - (hi - lo)) / 60U;
+    return w * (16U - (hi - lo)) / 16U;
 }
 
 /* --------------------------------------------------------------------- */
@@ -116,13 +117,12 @@ static uint32_t textness(uint32_t c)
 #define FX_COOL    0x46BEFFU   /* ... and of a triple   */
 #define FX_INK     0x2A1A08U   /* white text on it */
 #define FX_RAINBOW 0xFF6464U   /* base of the turning light of a tetromino */
+#define FX_WHITE   0xFFFFFFU
 
 int fx_palette(const fx_t *fx, uint32_t now_ms, uint32_t pal[256])
 {
     const uint32_t t = now_ms - fx->start_ms;
     uint32_t env = 0U, light = 0U, light_c = FX_WARM;
-    uint32_t phase = 0U;
-    int turn = 0;
     int k;
 
     memcpy(pal, asset_pal, 256U * sizeof pal[0]);
@@ -137,13 +137,12 @@ int fx_palette(const fx_t *fx, uint32_t now_ms, uint32_t pal[256])
         light_c = (fx->lines == 2) ? FX_WARM : FX_COOL;
         break;
     default:
-        /* One turn round the colour wheel, lit up like the others by a
-         * colour that turns along. */
-        turn = 1;
-        phase = t * 768U / 1280U;
+        /* Lit up like the others, by a pastel light that goes once round
+         * the colour wheel. The picture's own colours stay: turning them
+         * as well looked psychedelic on a large screen. */
         env = ramp(t, 0U, 160U, 960U, 1280U);
-        light = env * 170U / 256U;
-        light_c = hue(FX_RAINBOW, phase);
+        light = env * 150U / 256U;
+        light_c = mix(hue(FX_RAINBOW, t * 768U / 1280U), FX_WHITE, 128U);
         break;
     }
 
@@ -152,8 +151,6 @@ int fx_palette(const fx_t *fx, uint32_t now_ms, uint32_t pal[256])
         const uint32_t ink = textness(pal[k]);
         uint32_t c = pal[k];
 
-        if (turn)
-            c = hue(c, phase);
         if (light != 0U)
             c = mix(c, screen(c, light_c), light);
         /* The text turns dark on the lit up picture. */
@@ -162,6 +159,52 @@ int fx_palette(const fx_t *fx, uint32_t now_ms, uint32_t pal[256])
         pal[k] = c;
     }
     return 1;
+}
+
+/* --------------------------------------------------------------------- */
+/* Slam                                                                  */
+/* --------------------------------------------------------------------- */
+
+/* The way the picture moves, in thousandths of the amplitude, every 25 ms:
+ * pulled down hard, then springing back past its place and settling, like
+ * on a rubber band. At 20 frames per second every other point is shown. */
+static const int16_t k_slam[] = {
+    0, 700, 1000, 850, 550, 250, 0, -150, -200, -150, -80, -20, 0
+};
+#define SLAM_STEP_MS  25U
+#define SLAM_MS       (SLAM_STEP_MS * (sizeof k_slam / sizeof k_slam[0] - 1U))
+
+void fx_slam(fx_t *fx, int lines, int hard, int human, uint32_t now_ms)
+{
+    int amp;
+
+    if (lines >= 4)
+        amp = hard ? 80 : 50;
+    else if (lines == 3)
+        amp = hard ? 40 : 25;
+    else if (human && hard)
+        amp = 8;
+    else
+        return;
+    /* A weaker one does not cut a stronger one short. */
+    if (now_ms - fx->slam_ms < SLAM_MS && amp < fx->slam_amp)
+        return;
+    fx->slam_ms = now_ms;
+    fx->slam_amp = (uint8_t)amp;
+}
+
+int fx_shake(const fx_t *fx, uint32_t now_ms)
+{
+    const uint32_t t = now_ms - fx->slam_ms;
+    const uint32_t i = t / SLAM_STEP_MS;
+    const int32_t f = (int32_t)(t % SLAM_STEP_MS);
+    int32_t v;
+
+    if (fx->slam_amp == 0U || t >= SLAM_MS)
+        return 0;
+    v = k_slam[i] + (k_slam[i + 1U] - k_slam[i]) * f / (int32_t)SLAM_STEP_MS;
+    v *= fx->slam_amp;                      /* in 1/10000 pixel */
+    return (int)((v + (v >= 0 ? 5000 : -5000)) / 10000);
 }
 
 /* --------------------------------------------------------------------- */

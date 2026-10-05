@@ -59,7 +59,7 @@ void display_set_palette(const uint32_t pal[256]);
  * +-DISPLAY_SHIFT_MAX, from the next present() on. Moves the layer
  * window, not the pixels: what is pushed over the edge is not shown, the
  * strip left on the other side is black. */
-#define DISPLAY_SHIFT_MAX  4
+#define DISPLAY_SHIFT_MAX  12
 void display_set_shift(int dx, int dy);
 
 /* Picture turned by 180 degrees (1) or not (0). Writes the panel register

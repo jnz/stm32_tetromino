@@ -143,7 +143,8 @@ void app_tick(app_t *a, uint32_t now_ms);
 uint32_t app_leds(const app_t *a, uint32_t now_ms);
 
 /* Every line clear also starts a palette effect, in a->fx: fx_palette()
- * gives the colours to show the frame with, at any time (fx.h). */
+ * gives the colours to show the frame with, fx_shake() how far to move it
+ * down for the slam of a big clear, at any time (fx.h). */
 
 /* Draws the current state into a RENDER_W x RENDER_H buffer of palette
  * indices (render.h).

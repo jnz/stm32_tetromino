@@ -185,7 +185,8 @@ int main(void)
                     display_set_palette(pal);
                 fx_was_on = fx_on;
                 fx_shift(now, &dx, &dy);
-                display_set_shift(dx, dy);
+                /* Burn in shift, and the slam of a big clear on top. */
+                display_set_shift(dx, dy + fx_shake(&s_app.fx, now));
             }
             display_present();
             dt = DWT->CYCCNT - t0;
