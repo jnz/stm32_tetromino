@@ -1774,7 +1774,7 @@ function key(e, down) {
 }
 window.addEventListener("keydown", (e) => key(e, true));
 window.addEventListener("keyup", (e) => key(e, false));
-window.addEventListener("blur", () => { app.hold = 0; app.soft = false; });
+window.addEventListener("blur", () => { app.hold = 0; app.soft = false; releaseFingers(); });
 
 function undo() {
   if (appUndo(app)) { play("undo"); toastEl.classList.remove("show"); need = true; }
@@ -1793,10 +1793,22 @@ let gest = null;
 
 function colPx() { return cs / dpr; }   /* a column, in CSS pixels */
 
+/* No finger down any more, whatever the events said. */
+function releaseFingers() {
+  fingers.clear();
+  gest = null;
+  app.soft = false;
+}
+
 canvas.addEventListener("pointerdown", (e) => {
   if (e.pointerType === "mouse") return;
   e.preventDefault();
   try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* gone already */ }
+  /* The first finger of a new touch: no other can be down. One iOS took
+   * away without a pointerup or pointercancel (a system gesture, a
+   * notification) would otherwise stay, and every touch after it would
+   * count as a second finger, leaving the game without control. */
+  if (e.isPrimary) releaseFingers();
   fingers.set(e.pointerId, { x: e.clientX, y: e.clientY });
   if (fingers.size > 1) {
     /* A second finger: no gesture of the first one, maybe an undo (with
@@ -1959,6 +1971,7 @@ async function keepAwake() {
   catch (e) { /* not allowed here, fine */ }
 }
 document.addEventListener("visibilitychange", () => {
+  releaseFingers();
   if (document.hidden) saveHs(app);
   else { last = 0; keepAwake(); }
 });
