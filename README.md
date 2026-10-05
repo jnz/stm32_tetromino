@@ -87,13 +87,16 @@ make flash DEBUG=1        # probe can attach while running
 
 `web/tetromino.html` is the same game and AI as a single standalone page,
 ported from the C code (with the same seed it plays the same game as the
-board). Open it in any browser: `F` fullscreen, `I` fast drop (while you play: the AI takes over), `S` sound
-effects and `M` music (those of the original browser version), `P` pause.
-The arrow keys, `Z`, `X` and Space take over from the AI, which plays
-again after your game over. `Ctrl+Z` takes back the last piece. On a
-touch screen a touch takes over: drag sideways to move, tap to rotate,
-drag down to soft drop, flick down to drop, tap with two fingers to undo. `?blunder=50` makes the AI drop a piece
-at random now and then.
+board). Open it in any browser: `F` fullscreen, `I` fast drop (while you
+play: the AI takes over), `S` sound effects, `M` music (that of the
+original browser version), `P` pause. The arrow keys, `Z`, `X` and Space
+take over from the AI, which plays again after your game over. `Ctrl+Z`
+takes back the last piece. On a touch screen a touch takes over: drag
+sideways to move, tap to rotate, drag down to soft drop, flick down to
+drop, tap with two fingers to undo. Your games have today's rules: a lock
+delay that moves and turns on the ground extend, and T-spins score (the AI
+keeps the board's). `?blunder=50` makes the AI drop a piece at random now
+and then.
 
 ## Regenerating the artwork
 

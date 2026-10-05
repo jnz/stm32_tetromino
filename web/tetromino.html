@@ -24,6 +24,8 @@
          Arrow keys, Z, X, Space: take over and play yourself
            (left/right move, up or X rotate, Z rotate back, down soft
            drop, Space hard drop). After your game over the AI goes on.
+  Your game has today's rules: half a second on the ground, longer while
+         you move (lock delay), and T-spins score. The AI plays the board's.
   Touch: a touch takes over; drag sideways to move, tap to rotate, drag
          down to soft drop, flick down to drop, tap two fingers to undo.
   URL:   ?blunder=50    per mille of pieces the AI places at random
@@ -197,6 +199,21 @@ const ST_FIRSTBLOCK = 0, ST_NORMAL = 1, ST_CLEARLINES = 2, ST_GAMEOVER = 3;
 const LINESCORE = [40, 100, 300, 1200];
 const FLASH_COUNT = 1;
 const LEVELUP_TICKS = 2000 / TICK_MS;
+
+/* Rules of today's Tetris for a human player in this page (t.modern), not
+ * on the board and not for the AI, which plays the board's game: a piece
+ * on the ground locks after half a second, and every move or turn there
+ * starts that again, up to 15 times (until it gets lower than before); a
+ * hard drop locks at once. A T turned into its place scores as a T-spin:
+ * three of the four corners around its middle taken, both in front of its
+ * point for a full one, one for a mini. The points of the guideline, scaled
+ * to the NES points here (its 800 for four lines being 1200 here). */
+const LOCK_TICKS = 500 / TICK_MS, LOCK_RESETS = 15;
+const T_BLOCK = 5;
+const T_CORNERS = [[0, 0], [0, 2], [2, 0], [2, 2]];
+const T_FRONT = [[[0, 0], [0, 2]], [[0, 2], [2, 2]], [[2, 0], [2, 2]], [[0, 0], [2, 0]]];
+const TSPIN_SCORE = [600, 1200, 1800, 2400], TSPIN_MINI_SCORE = [150, 300, 600, 600];
+const TSPIN_TICKS = 2000 / TICK_MS;
 
 const SIZE = [4, 3, 3, 2, 3, 3, 3];
 const ROTATIONS = [4, 4, 4, 1, 4, 4, 4];
@@ -611,6 +628,22 @@ function addScore(t, points) { t.score += points; }   /* a double is exact far p
 function spawn(t) {
   t.block = t.next; t.rot = 0; t.x = COLS / 2 - 2; t.y = 0;
   t.next = selectRandomBlock(t);
+  t.lock_ticks = 0; t.lock_resets = 0; t.lowest = 0; t.last_rot = 0; t.kick2 = 0; t.lock_moved = 0;
+}
+
+/* A cell for the T-spin corners: walls and floor count as taken. */
+function taken(map, x, y) {
+  return x < 0 || x >= COLS || y >= ROWS || (y >= 0 && map[y * COLS + x] !== 0);
+}
+
+/* 0, or 1 for a mini T-spin, 2 for a full one, of the piece as it locks. */
+function tSpin(t) {
+  if (!t.modern || t.block !== T_BLOCK || !t.last_rot) return 0;
+  let corners = 0, front = 0;
+  for (const [r, c] of T_CORNERS) corners += taken(t.map, t.x + c, t.y + r) ? 1 : 0;
+  for (const [r, c] of T_FRONT[t.rot]) front += taken(t.map, t.x + c, t.y + r) ? 1 : 0;
+  if (corners < 3) return 0;
+  return (front === 2 || t.kick2) ? 2 : 1;
 }
 
 function tetrisInit(seed) {
@@ -622,6 +655,8 @@ function tetrisInit(seed) {
     bag: new Uint8Array(PIECES), bagindex: PIECES, rng: (seed >>> 0) || 0x2545F491,
     ai_active: 1, ai_superfast: 0, ai_blunder: 0, ai_state: AI_THINK, ai_x: 0, ai_rot: 0,
     tetris_play: 0, nbeam: 0, refined: 0, ai_best: AI_NO_MOVE, beam: [],
+    modern: 0, lock_ticks: 0, lock_resets: 0, lowest: 0, last_rot: 0, kick2: 0, lock_moved: 0,
+    tspin: 0, tspin_lines: 0, tspin_ticks: 0,
   };
   for (let k = 0; k < AI_BEAM; k++)
     t.beam.push({ score: 0, pieces: 0, x: 0, rot: 0, board: new Uint16Array(ROWS) });
@@ -631,36 +666,57 @@ function tetrisInit(seed) {
 }
 
 function stateNormal(t) {
-  const rotsave = t.rot, nrot = ROTATIONS[t.block];
+  const rotsave = t.rot, nrot = ROTATIONS[t.block], x0 = t.x;
   let xshift = 0, yoffset = 0;
   if (t.ai_active) aiRun(t);
   if (t.keys.left) xshift -= 1;
   if (t.keys.right) xshift += 1;
-  if (xshift !== 0 && !collides(t.map, t.block, t.rot, t.x + xshift, t.y)) t.x += xshift;
+  if (xshift !== 0 && !collides(t.map, t.block, t.rot, t.x + xshift, t.y)) { t.x += xshift; t.last_rot = 0; }
   if (t.keys.rot_left) t.rot += 1;
   if (t.keys.rot_right) t.rot += nrot - 1;
   t.rot %= nrot;
   if (t.rot !== rotsave && t.block !== 3) {
     const k = kickRotation(t.map, t.block, rotsave, t.rot, t.x, t.y);
-    if (k) { t.x = k.x; t.y = k.y; } else t.rot = rotsave;
+    if (k) { t.kick2 = Math.abs(k.y - t.y) === 2 ? 1 : 0; t.x = k.x; t.y = k.y; t.last_rot = 1; }
+    else t.rot = rotsave;
   }
   if (t.keys.warp_down) {
     const gy = ghostPos(t.map, t.block, t.rot, t.x, t.y);
-    if (gy !== t.y && gy > 0) { addScore(t, gy - t.y); t.warpcount++; t.y = gy; t.frame = 0; }
+    if (gy !== t.y && gy > 0) { addScore(t, gy - t.y); t.warpcount++; t.y = gy; t.frame = 0; t.last_rot = 0; }
   }
   if (t.frame === 0 || t.keys.fast_down) yoffset = 1;
-  if (!collides(t.map, t.block, t.rot, t.x, t.y + yoffset)) {
+  if (t.modern) {
+    /* Lock delay, see LOCK_TICKS. */
+    const moved = t.x !== x0 || t.rot !== rotsave || t.lock_moved;
+    t.lock_moved = 0;
+    if (!t.keys.warp_down) {
+      if (!collides(t.map, t.block, t.rot, t.x, t.y + 1)) {
+        if (yoffset) { t.y += 1; t.last_rot = 0; }
+        if (t.y > t.lowest) { t.lowest = t.y; t.lock_resets = 0; }
+        t.lock_ticks = 0;
+        t.state = ST_NORMAL;
+        return;
+      }
+      if (moved && t.lock_resets < LOCK_RESETS) { t.lock_resets++; t.lock_ticks = 0; }
+      if (++t.lock_ticks < LOCK_TICKS) return;
+    }
+  } else if (!collides(t.map, t.block, t.rot, t.x, t.y + yoffset)) {
     t.y += yoffset;
     t.state = ST_NORMAL;
     return;
   }
   if (t.state === ST_FIRSTBLOCK && t.y < 1) { t.state = ST_GAMEOVER; return; }
+  const ts = tSpin(t);
   stamp(t.map, t.block, t.rot, t.x, t.y);
   const cur = flashCompleteLines(t.map);
+  if (ts) {
+    addScore(t, t.level * (ts === 2 ? TSPIN_SCORE : TSPIN_MINI_SCORE)[cur]);
+    t.tspin = ts; t.tspin_lines = cur; t.tspin_ticks = TSPIN_TICKS;
+  }
   if (cur > 0) {
     t.linestat[cur - 1]++;
     t.lines += cur;
-    addScore(t, t.level * LINESCORE[cur - 1]);
+    if (!ts) addScore(t, t.level * LINESCORE[cur - 1]);
     let nl = Math.floor(t.lines / 10) + 1;
     if (nl > MAX_LEVEL) nl = MAX_LEVEL;
     if (nl > t.level) t.levelup_ticks = LEVELUP_TICKS;
@@ -690,6 +746,7 @@ function tetrisTick(t) {
   if (t.state === ST_GAMEOVER) return;
   t.ticks++;
   if (t.levelup_ticks > 0) t.levelup_ticks--;
+  if (t.tspin_ticks > 0) t.tspin_ticks--;
   if (++t.frame > t.speed) t.frame = 0;
   if (t.state === ST_FIRSTBLOCK || t.state === ST_NORMAL) stateNormal(t);
   else if (t.state === ST_CLEARLINES) stateClearLines(t);
@@ -823,6 +880,7 @@ function newGame(a, human) {
   a.game.ai_blunder = a.blunder;
   a.game.ai_superfast = a.fast ? 1 : 0;
   a.game.ai_active = human ? 0 : 1;
+  a.game.modern = human ? 1 : 0;
   a.human = !!human;
   a.best_before = human ? a.hs.human_best : a.hs.best_score;
   a.lines_before = human ? a.hs.human_lines : a.hs.best_lines;
@@ -946,6 +1004,8 @@ function appShift(a, dir) {
   if (!a.human || a.game_over || (t.state !== ST_NORMAL && t.state !== ST_FIRSTBLOCK)) return false;
   if (collides(t.map, t.block, t.rot, t.x + dir, t.y)) return false;
   t.x += dir;
+  t.lock_moved = 1;   /* a move on the ground: the lock delay again */
+  t.last_rot = 0;
   return true;
 }
 
@@ -997,6 +1057,7 @@ function appHandOver(a) {
   takeScore(a);
   a.human = false;
   t.ai_active = 1;
+  t.modern = 0;   /* the AI plays the board's rules */
   t.ai_superfast = a.fast ? 1 : 0;
   t.ai_state = AI_THINK;   /* plans for the piece where it is */
   a.hold = 0;
@@ -1467,7 +1528,11 @@ function render(shake) {
   /* Title bar: the grey gradient over the spawn rows, best or level up. */
   vgrad(0, 0, W, FIELD_Y, 50, 80, tg);
   const leading = t.score > a.best_before;
-  if (t.levelup_ticks > 0 && t.level > 1) {
+  if (t.tspin_ticks > 0) {
+    const s = (t.tspin === 1 ? "Mini " : "") + "T-Spin" +
+      ["", " Single", " Double", " Triple"][t.tspin_lines] + "!";
+    text(textW(F_BIG, s) > W - 12 ? F_SMALL : F_BIG, 6, 3, s, C_GOLD, "left", tf);
+  } else if (t.levelup_ticks > 0 && t.level > 1) {
     text(F_BIG, 6, 3, "Level " + t.level + "!", C_WHITE, "left", tf);
   } else {
     const best = leading ? t.score : a.best_before, bl = leading ? t.lines : a.lines_before;
@@ -1818,7 +1883,11 @@ function tickWithSound() {
     if (before.human && g.warpcount !== before.warps) play("hard");
     else play("lock", before.human ? 1 : 0.6);
   }
-  if (cleared >= 4) play("tetromino", 0.9);
+  if (g.tspin_ticks === TSPIN_TICKS) {
+    /* a T-spin rings like more lines than it took */
+    if (g.tspin === 2 && g.tspin_lines >= 2) play("tetromino", 0.9);
+    else play("clear", 0.9, Math.min(4, g.tspin_lines + 2));
+  } else if (cleared >= 4) play("tetromino", 0.9);
   else if (cleared > 0) play("clear", 0.9, cleared);
   if (g.level > before.level) play("levelup", 1);
   if (before.human && g.state === ST_NORMAL) {
