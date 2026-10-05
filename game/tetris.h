@@ -46,6 +46,19 @@ typedef struct {
     uint8_t warp_down;      /* hard drop */
 } tetris_keys_t;
 
+/* Candidates of the AI's search the third ply is still to look at, see
+ * ai_refine() in tetris.c. */
+#ifndef TETRIS_AI_BEAM
+#define TETRIS_AI_BEAM 10
+#endif
+
+typedef struct {
+    int32_t  score;                 /* two ply: pieces and the field left */
+    int32_t  pieces;                /* the part of it from the two pieces */
+    int8_t   x, rot;                /* placement of the falling piece */
+    uint16_t board[TETRIS_ROWS];    /* field after both, a row per word */
+} tetris_ai_cand_t;
+
 typedef struct {
     int8_t   map[TETRIS_ROWS][TETRIS_COLS];
 
@@ -80,8 +93,13 @@ typedef struct {
     uint8_t  ai_superfast;  /* hard drop once in place (the "i" key) */
     uint16_t ai_blunder;    /* per mille of pieces placed at random */
     uint8_t  ai_state;
-    int8_t   ai_x;
+    int8_t   ai_x;          /* target placement of the falling piece */
     int8_t   ai_rot;
+    uint8_t  ai_tetris_play;
+    uint8_t  ai_nbeam;      /* candidates of this piece */
+    uint8_t  ai_refined;    /* ... of them looked at three pieces deep */
+    int32_t  ai_best;       /* three ply score of the target */
+    tetris_ai_cand_t ai_beam[TETRIS_AI_BEAM];
 } tetris_t;
 
 /* Fresh game. seed only needs to differ between games, 0 is replaced by

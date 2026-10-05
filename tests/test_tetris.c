@@ -218,9 +218,10 @@ static void scenario_ai_reaches_right_wall(void)
      * browser AI (-1 .. COLS-3) never tried box column 8, and no other
      * placement of the T completes two lines here.
      *
-     * A tower in column 0, as high as AI_SAFE_HEIGHT in tetris.c, makes the
-     * AI play for survival. Below it, it would keep column 9 empty as the
-     * well for a tetromino clear, and not want the double. */
+     * A tower in column 0, at least as high as AI_SAFE_HEIGHT in
+     * tetris.c, makes the AI play for survival. Below it, it would keep
+     * column 9 empty as the well for a tetromino clear, and not want the
+     * double. */
     tetris_t t;
     int r, c, n;
 

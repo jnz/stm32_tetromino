@@ -303,39 +303,53 @@ enum { AI_THINK = 0, AI_MOVE, AI_IDLE };
  * board could pick different moves from the same position. Integers tie
  * exactly, and a tie goes to the placement found first, everywhere.
  *
+ * The weights below started from El-Tetris and, together with the
+ * tetromino play ones after them, were tuned on the host simulator by the
+ * cross-entropy method: points per hour of the perfect AI times the mean
+ * game length at AI_BLUNDER=100. That made it about 30 % more robust
+ * against blunders for 3 % fewer points.
+ *
  * Range: every feature stays below 3000 on a 10x22 field, a score within
  * +-1e8, well inside int32_t. */
-#define AI_LANDING_W   4500
-#define AI_ERODED_W    3418
-#define AI_ROWTRANS_W  3218
-#define AI_COLTRANS_W  9349
-#define AI_HOLES_W     7899
-#define AI_WELLS_W     3386
+#define AI_LANDING_W   4432
+#define AI_ERODED_W    2756
+#define AI_ROWTRANS_W  3617
+#define AI_COLTRANS_W  10635
+#define AI_HOLES_W     7643
+#define AI_WELLS_W     2469
 
 /* Tetromino play. While the stack is low, the AI keeps the rightmost
  * column empty as a well and fills the rest, so that an I dropped into the
  * well clears four lines at once: 1200 points per level instead of 4 x 40
  * for the same lines as singles. Then a clear of four is worth
- * AI_TETRIS_W, one of fewer lines costs per line, every cell in the well
- * column costs, and the well column is left out of the row transitions,
+ * AI_TETRIS_W, one of fewer lines costs (AI_SINGLE_W ..), every cell in
+ * the well column costs, and the well column is left out of the row
+ * transitions,
  * the column transitions and the wells. A gap in it under a cell that
  * covers the well still counts as a hole: without that, covering the well
  * cost only the one cell, and the AI did it every 30 pieces or so, then
  * had to dig the well out again with singles. Once the highest of the
- * other columns reaches
- * AI_SAFE_HEIGHT, it plays for survival with the plain features. */
+ * other columns reaches AI_SAFE_HEIGHT, it plays for survival with the
+ * plain features. */
 #define AI_WELL_COL     (TETRIS_COLS - 1)
 #ifndef AI_SAFE_HEIGHT
-#define AI_SAFE_HEIGHT  10
+#define AI_SAFE_HEIGHT  8
 #endif
 #ifndef AI_TETRIS_W
-#define AI_TETRIS_W     50000
+#define AI_TETRIS_W     38749
 #endif
-#ifndef AI_FEW_LINES_W
-#define AI_FEW_LINES_W  5000    /* per line of a 1..3 line clear */
+/* What a clear of fewer lines costs then, single, double, triple. */
+#ifndef AI_SINGLE_W
+#define AI_SINGLE_W     5651
+#endif
+#ifndef AI_DOUBLE_W
+#define AI_DOUBLE_W     12470
+#endif
+#ifndef AI_TRIPLE_W
+#define AI_TRIPLE_W     19302
 #endif
 #ifndef AI_WELL_W
-#define AI_WELL_W       5000    /* per cell in the well column   */
+#define AI_WELL_W       4504    /* per cell in the well column   */
 #endif
 
 /* Column range the AI tries for a piece's bounding box. The browser
@@ -528,7 +542,12 @@ static int32_t ai_piece_value(const ai_drop_t *d, int tetris_play)
 
     if (!tetris_play || d->lines == 0)
         return v + AI_ERODED_W * d->eroded;
-    return v + ((d->lines == 4) ? AI_TETRIS_W : -AI_FEW_LINES_W * d->lines);
+    switch (d->lines) {
+    case 1:  return v - AI_SINGLE_W;
+    case 2:  return v - AI_DOUBLE_W;
+    case 3:  return v - AI_TRIPLE_W;
+    default: return v + AI_TETRIS_W;
+    }
 }
 
 /* The part that belongs to the field left behind. Rows above from are
@@ -592,10 +611,11 @@ static int32_t ai_field_value(const ai_board_t b, int from, int tetris_play)
  * and one rotation per tick while gravity goes on. ai_drop() lets the
  * piece fall straight from the top, which on a high stack at a high level
  * it does not get to do: it lands on the way over. Played out tick by
- * tick from the tick ai_move() runs in, by the rules of state_normal().
- * Once in place the piece only goes straight down, to where ai_drop()
- * puts it. */
-static int ai_reachable(const tetris_t *t, int x, int rot)
+ * tick from the tick this runs in, by the rules of state_normal(): keys_now
+ * when the keys of this tick are still to come (a move tick), not when
+ * this tick has none (the tick ai_move() runs in). Once in place the
+ * piece only goes straight down, to where ai_drop() puts it. */
+static int ai_reachable(const tetris_t *t, int x, int rot, int keys_now)
 {
     const map_t *map = (const map_t *)&t->map;
     const int nrot = k_rotations[t->block];
@@ -604,10 +624,10 @@ static int ai_reachable(const tetris_t *t, int x, int rot)
     int first = 1;
 
     for (;;) {
-        if (!first) {
+        if (!first || keys_now) {
             int nr;
 
-            if (++frame > t->speed)
+            if (!first && ++frame > t->speed)
                 frame = 0;
             if (px == x && pr == rot)
                 return 1;
@@ -691,9 +711,76 @@ static void ai_blunder(tetris_t *t)
     }
 }
 
-/* ai_move(): two ply search over the current and the preview piece. The
- * browser version recursed with a leaf marker, here the two levels are
- * spelled out so the depth is fixed.
+/* Third ply. After the falling and the preview piece, the next one is one
+ * of the pieces left in the 7-bag, each as likely as the other, or any of
+ * the seven when the bag is used up. That is all a player can know (the
+ * bag's order is not looked at), and it is exact: the AI takes the mean
+ * of the best placement over these pieces.
+ *
+ * For every pair of placements of the first two pieces that would cost
+ * 7 times the two ply search. Only the TETRIS_AI_BEAM best pairs by the
+ * two ply score get it, and not at once: the two ply search alone fills
+ * the tick it runs in (35 ms of 50 at 90 MHz), all ten candidates took
+ * 74 ms. So ai_move() picks the two ply best and keeps the candidates,
+ * and every tick of the move after it ai_refine() looks AI_REFINE_PER_TICK
+ * of them three pieces deep, switching to one that comes out better and
+ * can still be reached from where the piece is by then. The piece is not
+ * dropped before all are done. */
+#ifndef AI_REFINE_PER_TICK
+#define AI_REFINE_PER_TICK 4
+#endif
+
+/* cand into the beam of the best so far, by score. Ties keep the one
+ * found first, as everywhere. */
+static void beam_insert(tetris_t *t, const tetris_ai_cand_t *cand)
+{
+    tetris_ai_cand_t *beam = t->ai_beam;
+    int i;
+
+    if (t->ai_nbeam == TETRIS_AI_BEAM &&
+        cand->score <= beam[TETRIS_AI_BEAM - 1].score)
+        return;
+    i = (t->ai_nbeam < TETRIS_AI_BEAM) ? t->ai_nbeam++ : TETRIS_AI_BEAM - 1;
+    while (i > 0 && beam[i - 1].score < cand->score) {
+        beam[i] = beam[i - 1];
+        i--;
+    }
+    beam[i] = *cand;
+}
+
+/* The pieces the third one can be, from what is left in the bag. */
+static int third_pieces(const tetris_t *t, uint8_t out[TETRIS_PIECES])
+{
+    int n = 0;
+    int k;
+
+    if (t->bagindex >= TETRIS_PIECES) {
+        for (k = 0; k < TETRIS_PIECES; k++)
+            out[n++] = (uint8_t)k;
+        return n;
+    }
+    for (k = t->bagindex; k < TETRIS_PIECES; k++)
+        out[n++] = t->bag[k];
+    return n;
+}
+
+/* Whether the field calls for tetromino play (AI_WELL_COL). */
+static int ai_tetris_play(const int8_t top[TETRIS_COLS])
+{
+    int x;
+
+    for (x = 0; x < TETRIS_COLS; x++) {
+        if (x != AI_WELL_COL && TETRIS_ROWS - top[x] >= AI_SAFE_HEIGHT)
+            return 0;
+    }
+    return 1;
+}
+
+/* ai_move(): the two ply search over the falling and the preview piece,
+ * in the tick the piece appears. Aims at the best placement it can reach
+ * and keeps the best pairs for ai_refine(). The browser version recursed
+ * with a leaf marker, here the levels are spelled out so the depth is
+ * fixed.
  *
  * Played straight, this AI does not lose: in host runs it was still going
  * after hours of game time at level 20. ai_blunder makes it drop a piece
@@ -701,38 +788,82 @@ static void ai_blunder(tetris_t *t)
 static void ai_move(tetris_t *t)
 {
     ai_board_t board, tmp;
-    int8_t top[TETRIS_COLS];
-    int32_t best = AI_NO_MOVE;
-    int tetris_play = 1;
+    int8_t top[TETRIS_COLS], top2[TETRIS_COLS];
+    tetris_ai_cand_t cand;
     int first;
     int x, r;
 
     t->ai_x = t->x;
     t->ai_rot = (int8_t)t->rot;
+    t->ai_nbeam = 0;
+    t->ai_refined = 0;
+    t->ai_best = AI_NO_MOVE;
     if (t->ai_blunder > 0U && (rnd(t) % 1000U) < t->ai_blunder) {
         ai_blunder(t);
         return;
     }
     ai_board((const int8_t (*)[TETRIS_COLS])t->map, board);
     first = column_tops(board, top);
-    for (x = 0; x < TETRIS_COLS; x++) {
-        if (x != AI_WELL_COL && TETRIS_ROWS - top[x] >= AI_SAFE_HEIGHT)
-            tetris_play = 0;
-    }
+    t->ai_tetris_play = (uint8_t)ai_tetris_play(top);
+
     for (x = TETRIS_AI_X_MIN; x <= TETRIS_AI_X_MAX; x++) {
         for (r = 0; r < k_rotations[t->block]; r++) {
             ai_drop_t d;
-            int32_t score;
+            int32_t v1;
+            int first2, x2, r2;
 
-            if (ai_drop(board, top, first, t->block, x, r, tmp, &d) < 0)
+            if (ai_drop(board, top, first, t->block, x, r, tmp, &d) < 0 ||
+                !ai_reachable(t, x, r, 0))
                 continue;
-            score = ai_piece_value(&d, tetris_play) +
-                    ai_best_leaf(tmp, t->next, tetris_play);
-            if (score > best && ai_reachable(t, x, r)) {
-                best = score;
-                t->ai_x = (int8_t)x;
-                t->ai_rot = (int8_t)r;
+            v1 = ai_piece_value(&d, t->ai_tetris_play);
+            first2 = column_tops(tmp, top2);
+            cand.x = (int8_t)x;
+            cand.rot = (int8_t)r;
+            for (x2 = TETRIS_AI_X_MIN; x2 <= TETRIS_AI_X_MAX; x2++) {
+                for (r2 = 0; r2 < k_rotations[t->next]; r2++) {
+                    ai_drop_t d2;
+
+                    if (ai_drop(tmp, top2, first2, t->next, x2, r2,
+                                cand.board, &d2) < 0)
+                        continue;
+                    cand.pieces = v1 + ai_piece_value(&d2, t->ai_tetris_play);
+                    cand.score = cand.pieces +
+                                 ai_field_value(cand.board, d2.from,
+                                                t->ai_tetris_play);
+                    beam_insert(t, &cand);
+                }
             }
+        }
+    }
+    /* The best pair's first placement: the two ply choice. */
+    if (t->ai_nbeam > 0U) {
+        t->ai_x = t->ai_beam[0].x;
+        t->ai_rot = t->ai_beam[0].rot;
+    }
+}
+
+/* Third ply for the next AI_REFINE_PER_TICK candidates of ai_move(), in a
+ * tick of the move. The first one done replaces the two ply choice, after
+ * that only a better one, and only one the piece can still get to. */
+static void ai_refine(tetris_t *t)
+{
+    uint8_t third[TETRIS_PIECES];
+    const int nthird = third_pieces(t, third);
+    int n;
+
+    for (n = 0; n < AI_REFINE_PER_TICK && t->ai_refined < t->ai_nbeam; n++) {
+        const tetris_ai_cand_t *c = &t->ai_beam[t->ai_refined++];
+        int64_t sum = 0;    /* no fit is AI_NO_MOVE, 7 of them overflow 32 bits */
+        int32_t score;
+        int i;
+
+        for (i = 0; i < nthird; i++)
+            sum += ai_best_leaf(c->board, third[i], t->ai_tetris_play);
+        score = c->pieces + (int32_t)(sum / nthird);
+        if (score > t->ai_best && ai_reachable(t, c->x, c->rot, 1)) {
+            t->ai_best = score;
+            t->ai_x = c->x;
+            t->ai_rot = c->rot;
         }
     }
 }
@@ -748,8 +879,11 @@ static void ai_run(tetris_t *t)
         ai_move(t);
         t->ai_state = AI_MOVE;
     } else if (t->ai_state == AI_MOVE) {
-        const int err_x = t->ai_x - t->x;
-        const int err_rot = t->ai_rot - (int)t->rot;
+        int err_x, err_rot;
+
+        ai_refine(t);
+        err_x = t->ai_x - t->x;
+        err_rot = t->ai_rot - (int)t->rot;
 
         if (err_x > 0)
             t->keys.right = 1;
@@ -759,7 +893,8 @@ static void ai_run(tetris_t *t)
             t->keys.rot_left = 1;
         if (err_rot < 0)
             t->keys.rot_right = 1;
-        if (err_x == 0 && err_rot == 0) {
+        /* In place, and thought through: down it goes. */
+        if (err_x == 0 && err_rot == 0 && t->ai_refined >= t->ai_nbeam) {
             if (t->ai_superfast)
                 t->keys.warp_down = 1;
             t->ai_state = AI_IDLE;

@@ -51,12 +51,14 @@ make flash DEBUG=1        # probe can attach while running
 - Field 10x22 (2 hidden spawn rows), 7-bag randomizer,
   wall kick tables, scoring (40/100/300/1200 x level), level every 10 lines up
   to 20, ghost piece, and the AI moving the piece one key press per 50 ms tick.
-- **AI.** Two ply search over the falling and the preview piece, rated by
-  Dellacherie's features with the El-Tetris weights, on a bitboard. While
-  the stack is low it keeps the right column free as a well and plays for
-  tetromino clears (about half of its clears, 4-5x the points per hour of
-  playing singles), above that for survival. Placements it cannot reach
-  in time at the current speed are skipped.
+- **AI.** Search over the falling and the preview piece, rated by
+  Dellacherie's features with weights tuned from El-Tetris.
+  The ten best pairs also get a third ply: the mean over the pieces still left
+  in the 7-bag. That part runs four candidates per tick while the piece
+  moves, so every tick stays within its 50 ms at 90 MHz. While the stack
+  is low it keeps the right column free as a well and plays for tetromino
+  clears, above that for survival. Placements it cannot reach in time
+  at the current speed are skipped.
 - **High score in flash.** A save happens at every game over and every 20 min
   while a game is ahead of the record. An erase happens once per 256 saves.
   Scores are 64 bit: the AI passes 2^32 points within weeks. Numbers too
