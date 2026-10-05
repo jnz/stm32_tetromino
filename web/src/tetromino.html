@@ -23,6 +23,8 @@
          Arrow keys, Z, X, Space: take over and play yourself
            (left/right move, up or X rotate, Z rotate back, down soft
            drop, Space hard drop). After your game over the AI goes on.
+  Touch: a touch takes over; drag sideways to move, tap to rotate, drag
+         down to soft drop, flick down to drop, tap two fingers to undo.
   URL:   ?blunder=50    per mille of pieces the AI places at random
          ?seed=123      fixed seed instead of a random one
 
@@ -59,7 +61,10 @@
     height: 100vh;
     height: 100dvh;
     display: block;
-    touch-action: manipulation;
+    touch-action: none;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
   }
   .bar {
     position: fixed;
@@ -869,6 +874,17 @@ function appInput(a, key, down) {
   return true;
 }
 
+/* A human's piece one column over right now, not with the next step: a
+ * swipe moves it as fast as the finger goes, not one column a step.
+ * Returns whether it moved. */
+function appShift(a, dir) {
+  const t = a.game;
+  if (!a.human || a.game_over || (t.state !== ST_NORMAL && t.state !== ST_FIRSTBLOCK)) return false;
+  if (collides(t.map, t.block, t.rot, t.x + dir, t.y)) return false;
+  t.x += dir;
+  return true;
+}
+
 function appTick(a) {
   a.now += TICK_MS;
   if (a.game_over) {
@@ -1640,7 +1656,7 @@ function key(e, down) {
   if (!down || e.repeat || e.altKey) return;
   if ((e.ctrlKey || e.metaKey) && (e.key === "z" || e.key === "Z")) {
     e.preventDefault();
-    if (appUndo(app)) { play("undo"); toastEl.classList.remove("show"); need = true; }
+    undo();
     return;
   }
   if (e.ctrlKey || e.metaKey) return;
@@ -1653,6 +1669,98 @@ function key(e, down) {
 window.addEventListener("keydown", (e) => key(e, true));
 window.addEventListener("keyup", (e) => key(e, false));
 window.addEventListener("blur", () => { app.hold = 0; app.soft = false; });
+
+function undo() {
+  if (appUndo(app)) { play("undo"); toastEl.classList.remove("show"); need = true; }
+}
+
+/* --- touch: gestures ------------------------------------------------------
+ * Drag sideways: the piece follows the finger, a column per column width
+ * the finger goes. Tap: rotate. Drag down: soft drop while held; flick
+ * down, also at the end of a drag sideways: hard drop. Tap with two fingers: undo. While the AI plays (or on
+ * the game over screen) a touch only takes over, like a key. A mouse
+ * does nothing here, it has the keyboard. */
+const TOUCH_HELP = "Drag ← → move · tap rotate · drag ↓ soft · flick ↓ drop · two fingers undo";
+const TAP_MS = 250, SLOP_PX = 10, FLICK_PX_MS = 0.7, TWO_TAP_MS = 350;
+const fingers = new Map();
+let gest = null, twoTap = null;
+
+function colPx() { return cs / dpr; }   /* a column, in CSS pixels */
+
+canvas.addEventListener("pointerdown", (e) => {
+  if (e.pointerType === "mouse") return;
+  e.preventDefault();
+  try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* gone already */ }
+  fingers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (fingers.size === 2) {
+    /* A second finger: no gesture of the first one, maybe an undo. */
+    if (gest) app.soft = false;
+    gest = null;
+    twoTap = { t0: e.timeStamp, moved: false };
+    return;
+  }
+  if (fingers.size > 2) { twoTap = null; return; }
+  twoTap = null;
+  if (paused) return;
+  if (!app.human || app.game_over) {
+    appInput(app, KEY_LEFT, true);   /* takes over, if the guard lets it */
+    if (app.human && !app.game_over) toast(TOUCH_HELP, 5000);
+    need = true;
+    return;
+  }
+  gest = { id: e.pointerId, x0: e.clientX, y0: e.clientY, ax: e.clientX, t0: e.timeStamp,
+           mode: null, trail: [[e.timeStamp, e.clientX, e.clientY]] };
+});
+
+canvas.addEventListener("pointermove", (e) => {
+  const f = fingers.get(e.pointerId);
+  if (!f) return;
+  if (twoTap && Math.hypot(e.clientX - f.x, e.clientY - f.y) > 2 * SLOP_PX) twoTap.moved = true;
+  if (!gest || gest.id !== e.pointerId) return;
+  const g = gest, dx = e.clientX - g.x0, dy = e.clientY - g.y0, col = colPx();
+  g.trail.push([e.timeStamp, e.clientX, e.clientY]);
+  if (g.trail.length > 12) g.trail.shift();
+  /* The first clear direction decides what the finger does until it
+   * lifts: sideways moves, down drops. */
+  if (!g.mode && Math.hypot(dx, dy) > SLOP_PX)
+    g.mode = Math.abs(dx) > Math.abs(dy) ? "side" : (dy > 0 ? "down" : "up");
+  if (g.mode === "side") {
+    const step = 0.85 * col;
+    while (e.clientX - g.ax >= step) { g.ax += step; if (appShift(app, 1)) { play("move", 0.8); need = true; } }
+    while (g.ax - e.clientX >= step) { g.ax -= step; if (appShift(app, -1)) { play("move", 0.8); need = true; } }
+  } else if (g.mode === "down") {
+    app.soft = dy > 0.5 * col;
+  }
+});
+
+function fingerUp(e, cancel) {
+  if (!fingers.delete(e.pointerId)) return;
+  if (twoTap && fingers.size === 0) {
+    if (!cancel && !twoTap.moved && e.timeStamp - twoTap.t0 < TWO_TAP_MS) undo();
+    twoTap = null;
+  }
+  if (!gest || gest.id !== e.pointerId) return;
+  const g = gest;
+  gest = null;
+  app.soft = false;
+  if (cancel || paused) return;
+  if (!g.mode && e.timeStamp - g.t0 < TAP_MS) {
+    appInput(app, KEY_CW, true);
+  } else if (g.mode) {
+    /* Speed over the last ~80 ms: a flick down drops, also at the end of a
+     * drag sideways; a slow drag down only fell. */
+    const now = e.timeStamp;
+    let k = g.trail.length - 1;
+    while (k > 0 && now - g.trail[k - 1][0] <= 80) k--;
+    const [t1, x1, y1] = g.trail[k], dt = Math.max(1, now - t1);
+    const vy = (e.clientY - y1) / dt, vx = (e.clientX - x1) / dt;
+    if (vy > FLICK_PX_MS && vy > 2 * Math.abs(vx)) appInput(app, KEY_HARD, true);
+  }
+  need = true;
+}
+canvas.addEventListener("pointerup", (e) => fingerUp(e, false));
+canvas.addEventListener("pointercancel", (e) => fingerUp(e, true));
+canvas.addEventListener("contextmenu", (e) => e.preventDefault());
 
 /* Sound effects and music, each on its own button. */
 const soundBtn = document.getElementById("sound"), musicBtn = document.getElementById("music");
@@ -1686,6 +1794,8 @@ setSound(false);
 setMusic(false);
 if (window.matchMedia && window.matchMedia("(pointer: fine)").matches)
   setTimeout(() => toast("Arrow keys: play yourself \u00b7 F fullscreen \u00b7 S sound \u00b7 M music", 4500), 800);
+else
+  setTimeout(() => toast("Touch the field to play yourself", 4500), 800);
 
 /* Controls and cursor fade out when nothing moves. */
 let idleTimer = 0;

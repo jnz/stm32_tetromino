@@ -90,7 +90,9 @@ ported from the C code (with the same seed it plays the same game as the
 board). Open it in any browser: `F` fullscreen, `I` fast drop, `S` sound
 effects and `M` music (those of the original browser version), `P` pause.
 The arrow keys, `Z`, `X` and Space take over from the AI, which plays
-again after your game over. `Ctrl+Z` takes back the last piece. `?blunder=50` makes the AI drop a piece
+again after your game over. `Ctrl+Z` takes back the last piece. On a
+touch screen a touch takes over: drag sideways to move, tap to rotate,
+drag down to soft drop, flick down to drop, tap with two fingers to undo. `?blunder=50` makes the AI drop a piece
 at random now and then.
 
 ## Regenerating the artwork
