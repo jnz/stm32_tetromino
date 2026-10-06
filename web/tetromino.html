@@ -21,9 +21,9 @@
   Keys:  F fullscreen   I fast drop on/off (while you play: the AI takes over)
          S sound   M music   P pause
          Ctrl+Z undo: the last piece once more (yours only, counted)
-         Arrow keys, Z, X, Space: take over and play yourself
-           (left/right move, up or X rotate, Z rotate back, down soft
-           drop, Space hard drop). After your game over the AI goes on.
+         Arrow keys, Z, X, A, Space: take over and play yourself
+           (left/right move, up or X rotate, Z rotate back, A half turn,
+           down soft drop, Space hard drop). After your game over the AI goes on.
   Your game has today's rules: half a second on the ground, longer while
          you move (lock delay), and T-spins score. The AI plays the board's.
   Touch: a touch takes over; drag sideways to move, tap to rotate, drag
@@ -266,10 +266,15 @@ function collides(map, block, rot, x, y) {
   return false;
 }
 
+/* A half turn (the page's, for a human; the board has none): in place,
+ * one up, one up and to a side, to a side. */
+const KICK_180 = [0, 0, 0, -1, 1, -1, -1, -1, 1, 0, -1, 0];
+
 /* Returns the kicked position {x, y}, or null when blocked. */
 function kickRotation(map, block, from, to, x, y) {
-  const kick = block === 0 ? WALLKICK_I[from][to] : WALLKICK[from][to];
-  for (let i = 0; i < 10; i += 2)
+  const kick = (to - from + 4) % 4 === 2 ? KICK_180
+    : block === 0 ? WALLKICK_I[from][to] : WALLKICK[from][to];
+  for (let i = 0; i < kick.length; i += 2)
     if (!collides(map, block, to, x + kick[i], y + kick[i + 1]))
       return { x: x + kick[i], y: y + kick[i + 1] };
   return null;
@@ -651,7 +656,7 @@ function tetrisInit(seed) {
     map: new Int8Array(ROWS * COLS), state: ST_FIRSTBLOCK, block: 0, rot: 0, next: 0, x: 0, y: 0,
     frame: 0, speed: 20, clearflashcount: 0, score: 0, lines: 0, level: 1,
     linestat: [0, 0, 0, 0], warpcount: 0, ticks: 0, levelup_ticks: 0,
-    keys: { left: 0, right: 0, rot_left: 0, rot_right: 0, fast_down: 0, warp_down: 0 },
+    keys: { left: 0, right: 0, rot_left: 0, rot_right: 0, rot_180: 0, fast_down: 0, warp_down: 0 },
     bag: new Uint8Array(PIECES), bagindex: PIECES, rng: (seed >>> 0) || 0x2545F491,
     ai_active: 1, ai_superfast: 0, ai_blunder: 0, ai_state: AI_THINK, ai_x: 0, ai_rot: 0,
     tetris_play: 0, nbeam: 0, refined: 0, ai_best: AI_NO_MOVE, beam: [],
@@ -674,6 +679,7 @@ function stateNormal(t) {
   if (xshift !== 0 && !collides(t.map, t.block, t.rot, t.x + xshift, t.y)) { t.x += xshift; t.last_rot = 0; }
   if (t.keys.rot_left) t.rot += 1;
   if (t.keys.rot_right) t.rot += nrot - 1;
+  if (t.keys.rot_180 && nrot === 4) t.rot += 2;   /* a human's only, the page's */
   t.rot %= nrot;
   if (t.rot !== rotsave && t.block !== 3) {
     const k = kickRotation(t.map, t.block, rotsave, t.rot, t.x, t.y);
@@ -751,7 +757,7 @@ function tetrisTick(t) {
   if (t.state === ST_FIRSTBLOCK || t.state === ST_NORMAL) stateNormal(t);
   else if (t.state === ST_CLEARLINES) stateClearLines(t);
   const k = t.keys;
-  k.left = k.right = k.rot_left = k.rot_right = k.warp_down = 0;
+  k.left = k.right = k.rot_left = k.rot_right = k.rot_180 = k.warp_down = 0;
 }
 
 /* --------------------------------------------- line clear effects (fx) -- */
@@ -838,11 +844,12 @@ function fxTransform(fx, now, ink) {
 const SLAM = [0, 700, 1000, 850, 550, 250, 0, -150, -200, -150, -80, -20, 0];
 const SLAM_STEP = 25, SLAM_MS = SLAM_STEP * (SLAM.length - 1);
 
-function fxSlam(fx, lines, hard, human, now) {
+function fxSlam(fx, lines, hard, human, now, locked) {
   let amp;
   if (lines >= 4) amp = hard ? 80 : 50;
   else if (lines === 3) amp = hard ? 40 : 25;
   else if (human && hard) amp = 8;
+  else if (human && locked) amp = 4;   /* the page only: a human's piece setting down */
   else return;
   if (now - fx.slam_ms < SLAM_MS && amp < fx.slam_amp) return;
   fx.slam_ms = now; fx.slam_amp = amp;
@@ -863,7 +870,8 @@ const GAMEOVER_MS = 8000;
  * the delay (DAS, there 16 frames, 267 ms; here on the game's 50 ms
  * steps), then one every 100 ms (6 frames there). */
 const REPEAT_DELAY_MS = 250, REPEAT_MS = 100, TAKEOVER_GUARD_MS = 1000;
-const KEY_LEFT = 1, KEY_RIGHT = 2, KEY_CW = 3, KEY_CCW = 4, KEY_SOFT = 5, KEY_HARD = 6;
+const HARD_GUARD_MS = 300;   /* see KEY_HARD in appInput */
+const KEY_LEFT = 1, KEY_RIGHT = 2, KEY_CW = 3, KEY_CCW = 4, KEY_SOFT = 5, KEY_HARD = 6, KEY_180 = 7;
 const UNDO_DEPTH = 50;   /* pieces a human can go back */
 
 function nextSeed(a) {
@@ -899,7 +907,7 @@ function newGame(a, human) {
 function cloneGame(t) {
   return Object.assign({}, t, {
     map: t.map.slice(), bag: t.bag.slice(), linestat: t.linestat.slice(),
-    keys: { left: 0, right: 0, rot_left: 0, rot_right: 0, fast_down: 0, warp_down: 0 },
+    keys: { left: 0, right: 0, rot_left: 0, rot_right: 0, rot_180: 0, fast_down: 0, warp_down: 0 },
   });
 }
 function pushUndo(a) {
@@ -940,7 +948,7 @@ function appInit(seed, blunder, hs) {
     hs: Object.assign({ best_score: 0, best_lines: 0, games: 0, human_best: 0, human_lines: 0 }, hs || {}),
     rng: 1, blunder: blunder | 0, fast: false, now: 0,
     game: null, game_over: false, over_since: 0, new_record: false, human: false,
-    hold: 0, hold_since: 0, repeat_at: 0, soft: false,
+    hold: 0, hold_since: 0, repeat_at: 0, soft: false, hard_at: -1e9, acted: true,
     best_before: 0, lines_before: 0,
     fx: { start: 0, lines: 0, slam_ms: 0, slam_amp: 0 }, dirty: false,
   };
@@ -991,8 +999,20 @@ function appInput(a, key, down) {
   } else if (down) {
     if (key === KEY_CW) k.rot_left = 1;      /* rotation index + 1 */
     if (key === KEY_CCW) k.rot_right = 1;
-    if (key === KEY_HARD) k.warp_down = 1;
+    if (key === KEY_180) k.rot_180 = 1;
+    if (key === KEY_HARD) {
+      /* A second hard drop right after one, with nothing done to the new
+       * piece in between, is a key or a flick twice by mistake far more
+       * often than meant: it does not count. */
+      if (a.acted || a.now - a.hard_at >= HARD_GUARD_MS) {
+        k.warp_down = 1;
+        a.hard_at = a.now;
+        a.acted = false;
+      }
+      return true;
+    }
   }
+  if (down && key !== KEY_SOFT) a.acted = true;
   return true;
 }
 
@@ -1006,6 +1026,7 @@ function appShift(a, dir) {
   t.x += dir;
   t.lock_moved = 1;   /* a move on the ground: the lock delay again */
   t.last_rot = 0;
+  a.acted = true;
   return true;
 }
 
@@ -1035,7 +1056,7 @@ function appTick(a) {
   }
   const cleared = a.game.lines - lines;
   if (cleared > 0) fxLinesCleared(a.fx, cleared, a.now);
-  fxSlam(a.fx, cleared, a.game.warpcount !== warps, a.human, a.now);
+  fxSlam(a.fx, cleared, a.game.warpcount !== warps, a.human, a.now, a.game.bagindex !== bag);
   if (a.game.state === ST_GAMEOVER) {
     a.game_over = true;
     a.over_since = a.now;
@@ -1945,7 +1966,8 @@ function toast(msg, ms) {
 
 const GAME_KEYS = {
   ArrowLeft: KEY_LEFT, ArrowRight: KEY_RIGHT, ArrowUp: KEY_CW, x: KEY_CW, X: KEY_CW,
-  z: KEY_CCW, Z: KEY_CCW, y: KEY_CCW, Y: KEY_CCW, ArrowDown: KEY_SOFT, " ": KEY_HARD,
+  z: KEY_CCW, Z: KEY_CCW, y: KEY_CCW, Y: KEY_CCW, a: KEY_180, A: KEY_180,
+  ArrowDown: KEY_SOFT, " ": KEY_HARD,
 };
 function key(e, down) {
   const k = (e.ctrlKey || e.metaKey) ? undefined : GAME_KEYS[e.key];
@@ -1956,7 +1978,7 @@ function key(e, down) {
     appInput(app, k, down);
     if (wasHuman && app.game.x !== x) play("move", 0.8);   /* moved at once */
     if (down && !wasHuman && app.human)
-      toast("\u2190 \u2192 move \u00b7 \u2191 / X rotate \u00b7 Z back \u00b7 \u2193 soft \u00b7 Space drop \u00b7 Ctrl+Z undo", 5000);
+      toast("\u2190 \u2192 move \u00b7 \u2191 / X rotate \u00b7 Z back \u00b7 A half turn \u00b7 \u2193 soft \u00b7 Space drop \u00b7 Ctrl+Z undo", 5000);
     need = true;
     return;
   }

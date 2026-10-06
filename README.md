@@ -89,8 +89,8 @@ make flash DEBUG=1        # probe can attach while running
 ported from the C code (with the same seed it plays the same game as the
 board). Open it in any browser: `F` fullscreen, `I` fast drop (while you
 play: the AI takes over), `S` sound effects, `M` music (that of the
-original browser version), `P` pause. The arrow keys, `Z`, `X` and Space
-take over from the AI, which plays again after your game over. `Ctrl+Z`
+original browser version), `P` pause. The arrow keys, `Z`, `X`, `A` (half
+turn) and Space take over from the AI, which plays again after your game over. `Ctrl+Z`
 takes back the last piece. On a touch screen a touch takes over: drag
 sideways to move, tap to rotate, drag down to soft drop, flick down to
 drop, tap with two fingers to undo. Your games have today's rules: a lock
