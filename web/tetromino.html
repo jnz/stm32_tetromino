@@ -1365,6 +1365,31 @@ function tileFor(v, tf) {
 /* The ghost: the bevel of the real tiles, in grey, drawn half transparent. */
 function ghostTile(tf) { return tileCanvas("g", COL_GHOST, 0x9C9C9C, 0x585858, tf); }
 
+/* The piece in play, a little lighter than what lies: it can still move.
+ * lift: 1..LIFT_STEPS, how far toward white; on the ground under a lock
+ * delay it sinks step by step to what it will be. */
+const LIFT_STEPS = 4, LIFT_MAX = 0.16;
+function lighter(c, f) {
+  const m = (sh) => { const v = (c >>> sh) & 255; return Math.round(v + (255 - v) * f) << sh; };
+  return m(16) | m(8) | m(0);
+}
+function liveTile(v, lift, tf) {
+  const f = LIFT_MAX * lift / LIFT_STEPS;
+  return tileCanvas("a" + v + "." + lift, lighter(COL[v - 1], f), lighter(COL_H[v - 1], f),
+                    lighter(COL_L[v - 1], f), tf);
+}
+
+/* Cells that just locked light up and fade (LOCK_FLASH_MS): now it is
+ * fixed. Set by tickWithSound. */
+const LOCK_FLASH_MS = 180, LOCK_FLASH_ALPHA = 0.45;
+let lockFlash = null;   /* { cells: [map index], at: app time } */
+function lockFlashAlpha(now) {
+  if (!lockFlash) return 0;
+  const k = 1 - (now - lockFlash.at) / LOCK_FLASH_MS;
+  if (k <= 0) { lockFlash = null; return 0; }
+  return LOCK_FLASH_ALPHA * Math.min(1, k);
+}
+
 /* --- background: St. Basil's, grey, through the effect when one runs --- */
 
 /* Two greys: the field and the church on it. */
@@ -1538,13 +1563,32 @@ function render(shake) {
           ctx.globalAlpha = ga; ctx.drawImage(gt, px, py); ctx.globalAlpha = 1;
         }
       }
+    /* Lighter while it can move; under a lock delay sinking to plain. */
+    let lift = LIFT_STEPS;
+    if (t.modern && t.lock_ticks > 0)
+      lift = Math.max(0, Math.round(LIFT_STEPS * (1 - t.lock_ticks / LOCK_TICKS)));
     for (let i = 0; i < n; i++)
       for (let j = 0; j < n; j++) {
         const v = pieceCell(t.block, t.rot, i, j);
         if (v === 0 || t.y + i < HIDDEN_ROWS) continue;
         const [px, py] = cell(t.y + i, t.x + j);
-        ctx.drawImage(tileFor(v, fxf), px, py);
+        ctx.drawImage(lift > 0 ? liveTile(v, lift, fxf) : tileFor(v, fxf), px, py);
       }
+  }
+
+  {
+    const al = lockFlashAlpha(a.now + acc);
+    if (al > 0) {
+      ctx.globalAlpha = al;
+      ctx.fillStyle = "#fff";
+      for (const k of lockFlash.cells) {
+        const r = Math.floor(k / COLS);
+        if (r < HIDDEN_ROWS || t.map[k] === 0) continue;   /* cleared away by now */
+        const [px, py] = cell(r, k % COLS);
+        ctx.fillRect(px, py, cs, cs);
+      }
+      ctx.globalAlpha = 1;
+    }
   }
 
   /* Title bar: the grey gradient over the spawn rows, best or level up. */
@@ -1650,7 +1694,7 @@ function loop(ts) {
   /* Frames at the game's 20 per second, but at the display's rate while
    * the slam moves the picture, so that it moves smoothly. */
   const shake = fxShake(app.fx, app.now + acc);
-  if (need || shake !== 0 || lastShake !== 0) { render(shake); need = false; }
+  if (need || shake !== 0 || lastShake !== 0 || lockFlash) { render(shake); need = false; }
   if (steps && app.now % 60000 === 0) saveHs(app);
   requestAnimationFrame(loop);
 }
@@ -1895,7 +1939,13 @@ function tickWithSound() {
   const g = app.game;
   const before = { x: g.x, rot: g.rot, y: g.y, lines: g.lines, level: g.level, bag: g.bagindex,
                    next: g.next, state: g.state, warps: g.warpcount, human: app.human };
+  const map0 = g.map.slice();
   appTick(app);
+  if (app.game === g && g.bagindex !== before.bag) {
+    const cells = [];
+    for (let k = 0; k < g.map.length; k++) if (map0[k] === 0 && g.map[k] !== 0) cells.push(k);
+    lockFlash = { cells, at: app.now };
+  }
   if (before.human && app.game_over && before.state !== ST_GAMEOVER)
     toast("Game over · a key plays again · the AI goes on in " + GAMEOVER_MS / 1000 + " s", GAMEOVER_MS - 500);
   if (!soundOn || app.game !== g) return;
