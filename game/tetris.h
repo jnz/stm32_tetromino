@@ -80,6 +80,8 @@ typedef struct {
     uint32_t warpcount;
     uint32_t ticks;         /* ticks since the game started */
     uint32_t levelup_ticks; /* > 0 while the level up notice is shown */
+    uint32_t banner_ticks;  /* > 0 while "Triple!" or "Quad!" is shown */
+    uint8_t banner_lines;   /* 3 or 4: which */
 
     tetris_keys_t keys;
 

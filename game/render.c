@@ -349,7 +349,8 @@ static void draw_title_best(uint8_t *fb, uint64_t score, uint32_t lines,
 }
 
 /* Everything the title bar shows, so that a change in any of it redraws
- * the bar: mode (0 best score, 1 level up notice), the number, the lines,
+ * the bar: mode (0 best score, 1 level up notice, 2 "Triple!" or "Quad!"
+ * before both), the number, the lines,
  * whether the lines are shown, and the tag: bit 0 AI (else YOU), bit 1
  * fast drop. */
 static void title_key(uint64_t key[5], const tetris_t *t, const render_info_t *info)
@@ -357,7 +358,12 @@ static void title_key(uint64_t key[5], const tetris_t *t, const render_info_t *i
     /* The best game so far, this one included once it is ahead. */
     const int leading = t->score > info->best_score;
 
-    if (t->levelup_ticks > 0U && t->level > 1U) {
+    if (t->banner_ticks > 0U) {
+        key[0] = 2U;
+        key[1] = t->banner_lines;
+        key[2] = 0U;
+        key[3] = 0U;
+    } else if (t->levelup_ticks > 0U && t->level > 1U) {
         key[0] = 1U;
         key[1] = t->level;
         key[2] = 0U;
@@ -384,7 +390,9 @@ static void draw_title_bar(uint8_t *fb, const uint64_t key[5])
         fill_rect(fb, 0, y, RENDER_W, 1, RGB(c, c, c));
     }
 
-    if (key[0] == 1U)
+    if (key[0] == 2U)
+        draw_text(fb, &font_big, 6, 3, key[1] >= 4U ? "Quad!" : "Triple!", C_GOLD);
+    else if (key[0] == 1U)
         draw_text(fb, &font_big, 6, 3, fmt_join(buf, "Level ", key[1], "!"),
                   C_WHITE);
     else

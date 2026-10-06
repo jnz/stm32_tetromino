@@ -15,6 +15,9 @@ static const uint32_t k_linescore[4] = { 40U, 100U, 300U, 1200U };
 /* Ticks the "Level n!" notice stays up, 2 s as in the browser. */
 #define LEVELUP_TICKS (2000U / TETRIS_TICK_MS)
 
+/* Ticks "Triple!" or "Quad!" stays up after three or four lines. */
+#define BANNER_TICKS (2000U / TETRIS_TICK_MS)
+
 /* Pieces, as blockmap[] in the JavaScript: per rotation a size x size
  * matrix, row major, holding the colour index or 0. */
 static const uint8_t k_size[TETRIS_PIECES] = { 4, 3, 3, 2, 3, 3, 3 };
@@ -1023,6 +1026,10 @@ static void state_normal(tetris_t *t)
                 newlevel = TETRIS_MAX_LEVEL;
             if (newlevel > t->level)
                 t->levelup_ticks = LEVELUP_TICKS;
+            if (curlines >= 3) {
+                t->banner_ticks = BANNER_TICKS;
+                t->banner_lines = (uint8_t)curlines;
+            }
             t->level = newlevel;
             t->speed = (uint8_t)(21U - t->level);
             t->state = TETRIS_CLEARLINES;
@@ -1060,6 +1067,8 @@ void tetris_tick(tetris_t *t)
     t->ticks++;
     if (t->levelup_ticks > 0U)
         t->levelup_ticks--;
+    if (t->banner_ticks > 0U)
+        t->banner_ticks--;
 
     t->frame++;
     if (t->frame > t->speed)

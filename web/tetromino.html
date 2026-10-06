@@ -715,8 +715,9 @@ function stateNormal(t) {
   const ts = tSpin(t);
   stamp(t.map, t.block, t.rot, t.x, t.y);
   const cur = flashCompleteLines(t.map);
-  if (ts) {
-    addScore(t, t.level * (ts === 2 ? TSPIN_SCORE : TSPIN_MINI_SCORE)[cur]);
+  if (ts) addScore(t, t.level * (ts === 2 ? TSPIN_SCORE : TSPIN_MINI_SCORE)[cur]);
+  if (ts || cur >= 3) {
+    /* the page's banner in the title bar: a T-spin, three or four lines */
     t.tspin = ts; t.tspin_lines = cur; t.tspin_ticks = TSPIN_TICKS;
   }
   if (cur > 0) {
@@ -1550,8 +1551,8 @@ function render(shake) {
   vgrad(0, 0, W, FIELD_Y, 50, 80, tg);
   const leading = t.score > a.best_before;
   if (t.tspin_ticks > 0) {
-    const s = (t.tspin === 1 ? "Mini " : "") + "T-Spin" +
-      ["", " Single", " Double", " Triple"][t.tspin_lines] + "!";
+    const s = !t.tspin ? (t.tspin_lines >= 4 ? "Quad!" : "Triple!")
+      : (t.tspin === 1 ? "Mini " : "") + "T-Spin" + ["", " Single", " Double", " Triple"][t.tspin_lines] + "!";
     text(textW(F_BIG, s) > W - 12 ? F_SMALL : F_BIG, 6, 3, s, C_GOLD, "left", tf);
   } else if (t.levelup_ticks > 0 && t.level > 1) {
     text(F_BIG, 6, 3, "Level " + t.level + "!", C_WHITE, "left", tf);
@@ -1904,7 +1905,7 @@ function tickWithSound() {
     if (before.human && g.warpcount !== before.warps) play("hard");
     else play("lock", before.human ? 1 : 0.6);
   }
-  if (g.tspin_ticks === TSPIN_TICKS) {
+  if (g.tspin && g.tspin_ticks === TSPIN_TICKS) {
     /* a T-spin rings like more lines than it took */
     if (g.tspin === 2 && g.tspin_lines >= 2) play("tetromino", 0.9);
     else play("clear", 0.9, Math.min(4, g.tspin_lines + 2));
