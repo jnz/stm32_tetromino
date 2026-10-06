@@ -46,6 +46,9 @@
   * { box-sizing: border-box; }
   html, body {
     margin: 0;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
     height: 100%;
     background: var(--bg);
     color: var(--fg);
@@ -2057,11 +2060,16 @@ function undo() {
 /* --- touch: gestures ------------------------------------------------------
  * Drag sideways: the piece follows the finger, a column per column width
  * the finger goes. Tap: rotate. Drag down: soft drop while held; flick
- * down, also at the end of a drag sideways: hard drop. Tap with two fingers: undo. While the AI plays (or on
+ * down: hard drop (see DOWN_STEEP). Tap with two fingers: undo. While the AI plays (or on
  * the game over screen) a touch only takes over, like a key. A mouse
  * does nothing here, it has the keyboard. */
 const TOUCH_HELP = "Drag ← → move · tap rotate · drag ↓ soft · flick ↓ drop · two fingers undo";
-const TAP_MS = 250, SLOP_PX = 10, FLICK_PX_MS = 0.7, TWO_TAP_MS = 400;
+const TAP_MS = 250, SLOP_PX = 10, TWO_TAP_MS = 400;
+/* A drag counts as down only when clearly steeper than sideways; a flick
+ * (hard drop) only from a drag down, fast at the end and long enough: a
+ * finger moving the piece sideways drifts down now and then, and a hard
+ * drop by mistake costs far more than one asked for twice. */
+const DOWN_STEEP = 1.5, SOFT_COLS = 1, FLICK_PX_MS = 1.0, FLICK_COLS = 2, FLICK_MS = 100;
 const fingers = new Map();
 let gest = null;
 
@@ -2112,13 +2120,13 @@ canvas.addEventListener("pointermove", (e) => {
   /* The first clear direction decides what the finger does until it
    * lifts: sideways moves, down drops. */
   if (!g.mode && Math.hypot(dx, dy) > SLOP_PX)
-    g.mode = Math.abs(dx) > Math.abs(dy) ? "side" : (dy > 0 ? "down" : "up");
+    g.mode = Math.abs(dy) <= DOWN_STEEP * Math.abs(dx) ? "side" : (dy > 0 ? "down" : "up");
   if (g.mode === "side") {
     const step = 0.85 * col;
     while (e.clientX - g.ax >= step) { g.ax += step; if (appShift(app, 1)) { play("move", 0.8); need = true; } }
     while (g.ax - e.clientX >= step) { g.ax -= step; if (appShift(app, -1)) { play("move", 0.8); need = true; } }
   } else if (g.mode === "down") {
-    app.soft = dy > 0.5 * col;
+    app.soft = dy > SOFT_COLS * col;
   }
 });
 
@@ -2131,15 +2139,15 @@ function fingerUp(e, cancel) {
   if (cancel || paused) return;
   if (!g.mode && e.timeStamp - g.t0 < TAP_MS) {
     appInput(app, KEY_CW, true);
-  } else if (g.mode) {
-    /* Speed over the last ~80 ms: a flick down drops, also at the end of a
-     * drag sideways; a slow drag down only fell. */
+  } else if (g.mode === "down") {
+    /* Speed over the last FLICK_MS: a flick drops, a slow drag only fell. */
     const now = e.timeStamp;
     let k = g.trail.length - 1;
-    while (k > 0 && now - g.trail[k - 1][0] <= 80) k--;
+    while (k > 0 && now - g.trail[k - 1][0] <= FLICK_MS) k--;
     const [t1, x1, y1] = g.trail[k], dt = Math.max(1, now - t1);
     const vy = (e.clientY - y1) / dt, vx = (e.clientX - x1) / dt;
-    if (vy > FLICK_PX_MS && vy > 2 * Math.abs(vx)) appInput(app, KEY_HARD, true);
+    if (vy > FLICK_PX_MS && vy > 3 * Math.abs(vx) && e.clientY - g.y0 > FLICK_COLS * colPx())
+      appInput(app, KEY_HARD, true);
   }
   need = true;
 }
@@ -2170,20 +2178,25 @@ document.getElementById("help-go").addEventListener("click", (e) => {
  * may cancel the pointers (it would zoom), the touches it keeps. */
 let two = null;
 canvas.addEventListener("touchstart", (e) => {
+  /* The field's touches are the game's: no magnifier, no selection, no
+   * callout (iOS shows its loupe on a held, moving finger otherwise). The
+   * pointer events still come. */
+  e.preventDefault();
   if (e.touches.length === 2) {
     two = { t0: e.timeStamp, at: new Map(), moved: false };
     for (const t of e.touches) two.at.set(t.identifier, [t.clientX, t.clientY]);
   } else if (e.touches.length > 2) {
     two = null;
   }
-}, { passive: true });
+}, { passive: false });
 canvas.addEventListener("touchmove", (e) => {
+  e.preventDefault();
   if (!two) return;
   for (const t of e.touches) {
     const p = two.at.get(t.identifier);
     if (p && Math.hypot(t.clientX - p[0], t.clientY - p[1]) > 2 * SLOP_PX) two.moved = true;
   }
-}, { passive: true });
+}, { passive: false });
 canvas.addEventListener("touchend", (e) => {
   if (!two || e.touches.length > 0) return;
   if (!two.moved && e.timeStamp - two.t0 < TWO_TAP_MS && app.human) undo();
@@ -2228,9 +2241,14 @@ if (window.matchMedia && window.matchMedia("(pointer: fine)").matches)
 else
   setTimeout(() => toast("Touch the field to play yourself", 4500), 800);
 
-/* Controls and cursor fade out when nothing moves. */
+/* Controls and cursor fade out when nothing moves. A finger playing on the
+ * field does not bring them back: they would sit under it all game, and a
+ * touch at the edge of the field could hit one ("Let AI play"). The mouse,
+ * the keyboard and touches while the AI plays do. */
 let idleTimer = 0;
-function wake() {
+function wake(e) {
+  if (e && e.pointerType && e.pointerType !== "mouse" && e.target === canvas &&
+      app.human && !app.game_over) return;
   document.body.classList.remove("idle");
   clearTimeout(idleTimer);
   idleTimer = setTimeout(() => document.body.classList.add("idle"), 2500);
