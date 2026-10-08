@@ -13,7 +13,8 @@ stm32f429/   firmware: HAL, BSP, display and glue code
 sim/         host PC simulator
 tests/       test suite
 tools/       gen_assets.py (artwork from art/ -> game/assets.c)
-web/         the game and AI as one standalone web page (template in web/src/)
+web/         the game and AI as standalone web pages, and the field alone to embed
+             (templates in web/src/)
 art/         tile sheet, background and music (input of gen_assets.py, gen_web.py)
 ```
 
@@ -98,6 +99,15 @@ delay that moves and turns on the ground extend, and T-spins score (the AI
 keeps the board's). `?blunder=50` makes the AI drop a piece at random now
 and then.
 
+`web/embed.html` is only the field, the AI playing at normal speed, for an
+iframe: no sound, no text, no score, no input, transparent around the field.
+
+    <iframe src="embed.html" style="border:0; width:300px; height:560px"
+            title="Tetromino AI"></iframe>
+
+`?level=1` keeps it at a level instead of getting faster with the lines,
+`?blunder=` and `?seed=` as above.
+
 ## Regenerating the artwork
 
 `python tools/gen_assets.py` (Pillow, DejaVu Sans Bold from matplotlib or the
@@ -105,7 +115,7 @@ system). Tiles come from `art/tetromino_blocks.png` scaled to
 15 px, the background from `art/basi.png`.
 
 `python tools/gen_web.py` (`make web`, no packages needed) builds
-`web/tetromino.html` from `web/src/tetromino.html` and embeds `art/basi.svg`
+`web/tetromino.html` and `web/embed.html` from `web/src/` and embeds `art/basi.svg`
 and the music in `art/sound/`; the sound effects are synthesized in the page.
 Edit the template, then run it.
 

@@ -1,0 +1,1100 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tetromino AI</title>
+<!--
+  Built by tools/gen_web.py from web/src/embed.html and the game and AI of
+  web/src/tetromino.html: edit those, not web/embed.html.
+
+  Tetromino AI to embed, for an iframe: only the field, the AI playing at
+  normal speed. No sound, no text, no score, no input. Around the field the
+  page is transparent; the field fills as much of the frame as it can with
+  whole pixels per cell. After a game over it starts the next.
+
+    <iframe src="embed.html" style="border:0; width:300px; height:560px"
+            title="Tetromino AI"></iframe>
+
+  URL:   ?seed=123      fixed seed instead of a random one
+         ?blunder=50    per mille of pieces the AI places at random (0:
+                        it never loses, and the game goes on for hours)
+         ?level=1       keep the game at this level (1 slow .. 20 fast)
+                        instead of rising with the lines
+-->
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: transparent; }
+  canvas { display: block; width: 100vw; height: 100vh; }
+</style>
+</head>
+<body>
+<canvas id="field" aria-hidden="true"></canvas>
+<script>
+"use strict";
+
+/* ===================================================================== */
+/* CORE BEGIN: game, AI, line clear effects and the ornament around them. */
+/* Port of game/tetris.c, game/fx.c and game/app.c. No DOM in here, so    */
+/* the core also runs under Node for the tests against the C code.        */
+/* ===================================================================== */
+
+const COLS = 10, ROWS = 22, HIDDEN_ROWS = 2, TICK_MS = 50, MAX_LEVEL = 20, PIECES = 7;
+const ST_FIRSTBLOCK = 0, ST_NORMAL = 1, ST_CLEARLINES = 2, ST_GAMEOVER = 3;
+const LINESCORE = [40, 100, 300, 1200];
+const FLASH_COUNT = 1;
+const LEVELUP_TICKS = 2000 / TICK_MS;
+
+/* Rules of today's Tetris for a human player in this page (t.modern), not
+ * on the board and not for the AI, which plays the board's game: a piece
+ * on the ground locks after half a second, and every move or turn there
+ * starts that again, up to 15 times (until it gets lower than before); a
+ * hard drop locks at once. A T turned into its place scores as a T-spin:
+ * three of the four corners around its middle taken, both in front of its
+ * point for a full one, one for a mini. The points of the guideline, scaled
+ * to the NES points here (its 800 for four lines being 1200 here). */
+const LOCK_TICKS = 500 / TICK_MS, LOCK_RESETS = 15;
+const T_BLOCK = 5;
+const T_CORNERS = [[0, 0], [0, 2], [2, 0], [2, 2]];
+const T_FRONT = [[[0, 0], [0, 2]], [[0, 2], [2, 2]], [[2, 0], [2, 2]], [[0, 0], [2, 0]]];
+const TSPIN_SCORE = [600, 1200, 1800, 2400], TSPIN_MINI_SCORE = [150, 300, 600, 600];
+const TSPIN_TICKS = 2000 / TICK_MS;
+
+const SIZE = [4, 3, 3, 2, 3, 3, 3];
+const ROTATIONS = [4, 4, 4, 1, 4, 4, 4];
+const SHAPE = [
+  [[0,0,0,0, 1,1,1,1, 0,0,0,0, 0,0,0,0], [0,0,1,0, 0,0,1,0, 0,0,1,0, 0,0,1,0],
+   [0,0,0,0, 0,0,0,0, 1,1,1,1, 0,0,0,0], [0,1,0,0, 0,1,0,0, 0,1,0,0, 0,1,0,0]],
+  [[2,0,0, 2,2,2, 0,0,0], [0,2,2, 0,2,0, 0,2,0], [0,0,0, 2,2,2, 0,0,2], [0,2,0, 0,2,0, 2,2,0]],
+  [[0,0,3, 3,3,3, 0,0,0], [0,3,0, 0,3,0, 0,3,3], [0,0,0, 3,3,3, 3,0,0], [3,3,0, 0,3,0, 0,3,0]],
+  [[4,4, 4,4]],
+  [[0,5,5, 5,5,0, 0,0,0], [0,5,0, 0,5,5, 0,0,5], [0,0,0, 0,5,5, 5,5,0], [5,0,0, 5,5,0, 0,5,0]],
+  [[0,6,0, 6,6,6, 0,0,0], [0,6,0, 0,6,6, 0,6,0], [0,0,0, 6,6,6, 0,6,0], [0,6,0, 6,6,0, 0,6,0]],
+  [[7,7,0, 0,7,7, 0,0,0], [0,0,7, 0,7,7, 0,7,0], [0,0,0, 7,7,0, 0,7,7], [0,7,0, 7,7,0, 7,0,0]],
+];
+
+/* Wall kicks [from][to], five (x, y) offsets. Unlisted transitions are
+ * all zero, as in the C tables. */
+function kickTable(list) {
+  const t = [];
+  for (let f = 0; f < 4; f++) { t.push([]); for (let k = 0; k < 4; k++) t[f].push(new Array(10).fill(0)); }
+  for (const [f, k, v] of list) t[f][k] = v;
+  return t;
+}
+const WALLKICK = kickTable([
+  [0, 1, [0, 0, -1, 0, -1, 1, 0, -2, -1, -2]], [0, 3, [0, 0, 1, 0, 1, 1, 0, -2, 1, -2]],
+  [1, 0, [0, 0, 1, 0, 1, -1, 0, 2, 1, 2]],     [1, 2, [0, 0, 1, 0, 1, -1, 0, 2, 1, 2]],
+  [2, 1, [0, 0, -1, 0, -1, 1, 0, -2, -1, -2]], [2, 3, [0, 0, 1, 0, 1, 1, 0, -2, 1, -2]],
+  [3, 2, [0, 0, -1, 0, -1, -1, 0, 2, -1, 2]],  [3, 0, [0, 0, -1, 0, -1, -1, 0, 2, -1, 2]],
+]);
+const WALLKICK_I = kickTable([
+  [0, 1, [0, 0, -2, 0, 1, 0, -2, -1, 1, 2]], [0, 3, [0, 0, -1, 0, 2, 0, -1, 2, 2, -1]],
+  [1, 0, [0, 0, 2, 0, -1, 0, 2, 1, -1, -2]], [1, 2, [0, 0, -1, 0, 2, 0, -1, 2, 2, -1]],
+  [2, 1, [0, 0, 1, 0, -2, 0, 1, -2, -2, 1]], [2, 3, [0, 0, 2, 0, -1, 0, 2, 1, -1, -2]],
+  [3, 2, [0, 0, -2, 0, 1, 0, -2, -1, 1, 2]], [3, 0, [0, 0, 1, 0, -2, 0, 1, -2, -2, 1]],
+]);
+
+function pieceCell(block, rot, row, col) {
+  const r = ((rot % ROTATIONS[block]) + ROTATIONS[block]) % ROTATIONS[block];
+  return SHAPE[block][r][row * SIZE[block] + col];
+}
+
+/* map: Int8Array(ROWS * COLS), row major. */
+function collides(map, block, rot, x, y) {
+  const n = SIZE[block], bm = SHAPE[block][rot];
+  for (let i = 0; i < n; i++)
+    for (let j = 0; j < n; j++) {
+      if (bm[i * n + j] === 0) continue;
+      if (x + j >= COLS || x + j < 0 || y + i >= ROWS || y + i < 0 ||
+          map[(y + i) * COLS + x + j] !== 0) return true;
+    }
+  return false;
+}
+
+/* A half turn (the page's, for a human; the board has none): in place,
+ * one up, one up and to a side, to a side. */
+const KICK_180 = [0, 0, 0, -1, 1, -1, -1, -1, 1, 0, -1, 0];
+
+/* Returns the kicked position {x, y}, or null when blocked. */
+function kickRotation(map, block, from, to, x, y) {
+  const kick = (to - from + 4) % 4 === 2 ? KICK_180
+    : block === 0 ? WALLKICK_I[from][to] : WALLKICK[from][to];
+  for (let i = 0; i < kick.length; i += 2)
+    if (!collides(map, block, to, x + kick[i], y + kick[i + 1]))
+      return { x: x + kick[i], y: y + kick[i + 1] };
+  return null;
+}
+
+function stamp(map, block, rot, x, y) {
+  const n = SIZE[block], bm = SHAPE[block][rot];
+  for (let i = 0; i < n; i++)
+    for (let j = 0; j < n; j++) {
+      const row = y + i, col = x + j;
+      if (bm[i * n + j] === 0) continue;
+      if (row >= 0 && row < ROWS && col >= 0 && col < COLS) map[row * COLS + col] = bm[i * n + j];
+    }
+}
+
+function ghostPos(map, block, rot, x, y) {
+  for (let gy = y + 1; gy < ROWS; gy++)
+    if (collides(map, block, rot, x, gy)) return gy - 1;
+  return -1;
+}
+
+function rowFull(map, row) {
+  for (let j = 0; j < COLS; j++) if (map[row * COLS + j] === 0) return false;
+  return true;
+}
+
+function flashCompleteLines(map) {
+  let count = 0;
+  for (let i = ROWS - 1; i >= 0; i--) {
+    if (!rowFull(map, i)) continue;
+    count++;
+    for (let j = 0; j < COLS; j++) map[i * COLS + j] = -map[i * COLS + j];
+  }
+  return count;
+}
+
+function clearBottomLine(map) {
+  for (let i = ROWS - 1; i >= 1; i--) {
+    if (!rowFull(map, i)) continue;
+    map.copyWithin(COLS, 0, i * COLS);
+    map.fill(0, 0, COLS);
+    return;
+  }
+}
+
+function rnd(t) {
+  let x = t.rng;
+  x ^= x << 13; x >>>= 0;
+  x ^= x >>> 17;
+  x ^= x << 5; x >>>= 0;
+  t.rng = x;
+  return x;
+}
+
+function selectRandomBlock(t) {
+  if (t.bagindex >= PIECES) {
+    for (let m = 0; m < PIECES; m++) t.bag[m] = m;
+    for (let m = PIECES; m > 1; m--) {
+      const i = rnd(t) % m;
+      const tmp = t.bag[m - 1]; t.bag[m - 1] = t.bag[i]; t.bag[i] = tmp;
+    }
+    t.bagindex = 0;
+  }
+  return t.bag[t.bagindex++];
+}
+
+/* ---------------------------------------------------------------- AI -- */
+
+const AI_THINK = 0, AI_MOVE = 1, AI_IDLE = 2;
+
+/* Dellacherie's features, weights tuned from El-Tetris, in thousandths. */
+const AI_LANDING_W = 4432, AI_ERODED_W = 2756, AI_ROWTRANS_W = 3617,
+      AI_COLTRANS_W = 10635, AI_HOLES_W = 7643, AI_WELLS_W = 2469;
+/* Tetromino play: the right column kept as a well while the stack is low. */
+const AI_WELL_COL = COLS - 1, AI_SAFE_HEIGHT = 8, AI_TETRIS_W = 38749,
+      AI_SINGLE_W = 5651, AI_DOUBLE_W = 12470, AI_TRIPLE_W = 19302, AI_WELL_W = 4504;
+const AI_X_MIN = -2, AI_X_MAX = COLS - 1;
+const AI_FULL = (1 << COLS) - 1;
+const AI_NO_MOVE = -(1 << 30);
+const AI_BEAM = 10, AI_REFINE_PER_TICK = 4;
+
+function popcount16(v) {
+  v = v - ((v >>> 1) & 0x5555);
+  v = (v & 0x3333) + ((v >>> 2) & 0x3333);
+  v = (v + (v >>> 4)) & 0x0F0F;
+  return (v + (v >>> 8)) & 0x1F;
+}
+function ctz(v) { return 31 - Math.clz32(v & -v); }
+
+function aiBoard(map, b) {
+  for (let i = 0; i < ROWS; i++) {
+    let r = 0;
+    for (let j = 0; j < COLS; j++) if (map[i * COLS + j] !== 0) r |= 1 << j;
+    b[i] = r;
+  }
+}
+
+/* Fills top, returns the topmost occupied row of the whole field. */
+function columnTops(b, top) {
+  let seen = 0, first = ROWS;
+  top.fill(ROWS);
+  for (let i = 0; i < ROWS && seen !== AI_FULL; i++) {
+    let fresh = b[i] & ~seen;
+    if (b[i] !== 0 && first === ROWS) first = i;
+    while (fresh !== 0) { top[ctz(fresh)] = i; fresh &= fresh - 1; }
+    seen |= b[i];
+  }
+  return first;
+}
+
+function landingRow(top, block, rot, x) {
+  const n = SIZE[block], bm = SHAPE[block][rot];
+  let y = ROWS;
+  for (let j = 0; j < n; j++)
+    for (let i = n - 1; i >= 0; i--)
+      if (bm[i * n + j] !== 0) { const land = top[x + j] - 1 - i; if (land < y) y = land; break; }
+  return y;
+}
+
+const maskBuf = new Int32Array(4);
+function pieceMasks(block, rot, x, m) {
+  const n = SIZE[block], bm = SHAPE[block][rot];
+  for (let i = 0; i < n; i++) {
+    m[i] = 0;
+    for (let j = 0; j < n; j++) {
+      if (bm[i * n + j] === 0) continue;
+      if (x + j < 0 || x + j >= COLS) return false;
+      m[i] |= 1 << (x + j);
+    }
+  }
+  return true;
+}
+
+/* Drops block straight from row 0 into a copy of b (out), removes the
+ * lines it completes. d gets lines, eroded, landing2, from. false if the
+ * piece does not fit at the top. */
+function aiDrop(b, top, first, block, x, rot, out, d) {
+  const n = SIZE[block], m = maskBuf;
+  let lo = n, hi = -1, cells = 0;
+  if (!pieceMasks(block, rot, x, m)) return false;
+  for (let i = 0; i < n; i++) if ((m[i] & b[i]) !== 0) return false;
+  let y = landingRow(top, block, rot, x);
+  if (y < 0) y = 0;
+  out.set(b);
+  for (let i = 0; i < n; i++) {
+    if (m[i] === 0) continue;
+    if (i < lo) lo = i;
+    hi = i;
+    out[y + i] |= m[i];
+    if (out[y + i] === AI_FULL) cells += popcount16(m[i]);
+  }
+  d.landing2 = 2 * (ROWS - 1 - (y + hi)) + (hi - lo);
+  d.from = y < first ? y : first;
+  d.lines = 0;
+  if (cells > 0) {
+    let k = y + hi;
+    for (let i = y + hi; i >= 0; i--) if (out[i] !== AI_FULL) out[k--] = out[i];
+    d.lines = k + 1;
+    for (; k >= 0; k--) out[k] = 0;
+  }
+  d.eroded = d.lines * cells;
+  return true;
+}
+
+function aiPieceValue(d, tetrisPlay) {
+  const v = -AI_LANDING_W * d.landing2 / 2;
+  if (!tetrisPlay || d.lines === 0) return v + AI_ERODED_W * d.eroded;
+  switch (d.lines) {
+    case 1: return v - AI_SINGLE_W;
+    case 2: return v - AI_DOUBLE_W;
+    case 3: return v - AI_TRIPLE_W;
+    default: return v + AI_TETRIS_W;
+  }
+}
+
+const depthBuf = new Int32Array(COLS);
+function aiFieldValue(b, from, tetrisPlay) {
+  const wellbit = tetrisPlay ? (1 << AI_WELL_COL) : 0;
+  const cols = AI_FULL & ~wellbit;
+  const wellCols = cols & ~(wellbit >>> 1) & ~(wellbit << 1);
+  const depth = depthBuf;
+  let prev = 0, roof = 0, wprev = 0;
+  let rowtrans = 2 * from, coltrans = 0, holes = 0, wells = 0, inWell = 0;
+  for (let i = from; i < ROWS; i++) {
+    const r = b[i];
+    const v = ((r | wellbit) << 1) | 1 | (1 << (COLS + 1));
+    rowtrans += popcount16((v ^ (v >>> 1)) & ((1 << (COLS + 1)) - 1));
+    coltrans += popcount16((r ^ prev) & cols);
+    holes += popcount16(~r & roof & AI_FULL);
+    if (r & wellbit) inWell++;
+    prev = r;
+    roof |= r;
+    const w = ~r & ((r << 1) | 1) & ((r >>> 1) | (1 << (COLS - 1))) & wellCols;
+    let k = w;
+    while (k !== 0) {
+      const j = ctz(k);
+      depth[j] = ((wprev >>> j) & 1) ? depth[j] + 1 : 1;
+      wells += depth[j];
+      k &= k - 1;
+    }
+    wprev = w;
+  }
+  coltrans += popcount16(~prev & cols);
+  return -AI_ROWTRANS_W * rowtrans - AI_COLTRANS_W * coltrans -
+         AI_HOLES_W * holes - AI_WELLS_W * wells - AI_WELL_W * inWell;
+}
+
+/* Whether ai_run()'s key presses get the piece to (x, rot) before it locks. */
+function aiReachable(t, x, rot, keysNow) {
+  const map = t.map, block = t.block, nrot = ROTATIONS[block];
+  let px = t.x, py = t.y, pr = t.rot, frame = t.frame, first = true;
+  for (;;) {
+    if (!first || keysNow) {
+      if (!first && ++frame > t.speed) frame = 0;
+      if (px === x && pr === rot) return true;
+      if (px !== x) {
+        const dx = x > px ? 1 : -1;
+        if (!collides(map, block, pr, px + dx, py)) px += dx;
+      }
+      let nr = pr;
+      if (rot > pr) nr = (pr + 1) % nrot;
+      else if (rot < pr) nr = (pr + nrot - 1) % nrot;
+      if (nr !== pr && block !== 3) {
+        const k = kickRotation(map, block, pr, nr, px, py);
+        if (k) { px = k.x; py = k.y; pr = nr; }
+      }
+    }
+    first = false;
+    if (frame === 0) {
+      if (collides(map, block, pr, px, py + 1)) return px === x && pr === rot;
+      py++;
+    }
+  }
+}
+
+const leafTmp = new Uint16Array(ROWS), leafTop = new Int8Array(COLS);
+const leafD = { lines: 0, eroded: 0, landing2: 0, from: 0 };
+function aiBestLeaf(b, block, tetrisPlay) {
+  const first = columnTops(b, leafTop);
+  let best = AI_NO_MOVE;
+  for (let x = AI_X_MIN; x <= AI_X_MAX; x++)
+    for (let r = 0; r < ROTATIONS[block]; r++) {
+      if (!aiDrop(b, leafTop, first, block, x, r, leafTmp, leafD)) continue;
+      const score = aiPieceValue(leafD, tetrisPlay) + aiFieldValue(leafTmp, leafD.from, tetrisPlay);
+      if (score > best) best = score;
+    }
+  return best;
+}
+
+function aiBlunder(t) {
+  const xs = [], rs = [];
+  for (let x = AI_X_MIN; x <= AI_X_MAX; x++)
+    for (let r = 0; r < ROTATIONS[t.block]; r++) {
+      if (collides(t.map, t.block, r, x, 0)) continue;
+      xs.push(x); rs.push(r);
+    }
+  if (xs.length > 0) {
+    const k = rnd(t) % xs.length;
+    t.ai_x = xs[k]; t.ai_rot = rs[k];
+  }
+}
+
+function beamInsert(t, c) {
+  const beam = t.beam;
+  let n = t.nbeam;
+  if (n === AI_BEAM && c.score <= beam[AI_BEAM - 1].score) return;
+  let i = n < AI_BEAM ? n++ : AI_BEAM - 1;
+  const slot = beam[i];
+  while (i > 0 && beam[i - 1].score < c.score) { beam[i] = beam[i - 1]; i--; }
+  slot.score = c.score; slot.pieces = c.pieces; slot.x = c.x; slot.rot = c.rot;
+  slot.board.set(c.board);
+  beam[i] = slot;
+  t.nbeam = n;
+}
+
+function thirdPieces(t) {
+  if (t.bagindex >= PIECES) return [0, 1, 2, 3, 4, 5, 6];
+  return Array.from(t.bag.subarray(t.bagindex));
+}
+
+const moveBoard = new Uint16Array(ROWS), moveTmp = new Uint16Array(ROWS);
+const moveTop = new Int8Array(COLS), moveTop2 = new Int8Array(COLS);
+const moveD = { lines: 0, eroded: 0, landing2: 0, from: 0 };
+const moveD2 = { lines: 0, eroded: 0, landing2: 0, from: 0 };
+const moveCand = { score: 0, pieces: 0, x: 0, rot: 0, board: new Uint16Array(ROWS) };
+
+/* Two ply search when the piece appears; keeps the best pairs. */
+function aiMove(t) {
+  t.ai_x = t.x; t.ai_rot = t.rot;
+  t.nbeam = 0; t.refined = 0; t.ai_best = AI_NO_MOVE;
+  if (t.ai_blunder > 0 && (rnd(t) % 1000) < t.ai_blunder) { aiBlunder(t); return; }
+  aiBoard(t.map, moveBoard);
+  const first = columnTops(moveBoard, moveTop);
+  let tp = 1;
+  for (let x = 0; x < COLS; x++)
+    if (x !== AI_WELL_COL && ROWS - moveTop[x] >= AI_SAFE_HEIGHT) { tp = 0; break; }
+  t.tetris_play = tp;
+  const c = moveCand;
+  for (let x = AI_X_MIN; x <= AI_X_MAX; x++)
+    for (let r = 0; r < ROTATIONS[t.block]; r++) {
+      if (!aiDrop(moveBoard, moveTop, first, t.block, x, r, moveTmp, moveD) || !aiReachable(t, x, r, false))
+        continue;
+      const v1 = aiPieceValue(moveD, tp);
+      const first2 = columnTops(moveTmp, moveTop2);
+      c.x = x; c.rot = r;
+      for (let x2 = AI_X_MIN; x2 <= AI_X_MAX; x2++)
+        for (let r2 = 0; r2 < ROTATIONS[t.next]; r2++) {
+          if (!aiDrop(moveTmp, moveTop2, first2, t.next, x2, r2, c.board, moveD2)) continue;
+          c.pieces = v1 + aiPieceValue(moveD2, tp);
+          c.score = c.pieces + aiFieldValue(c.board, moveD2.from, tp);
+          beamInsert(t, c);
+        }
+    }
+  if (t.nbeam > 0) { t.ai_x = t.beam[0].x; t.ai_rot = t.beam[0].rot; }
+}
+
+/* Third ply for the next few candidates, over the pieces left in the bag. */
+function aiRefine(t) {
+  const third = thirdPieces(t);
+  for (let n = 0; n < AI_REFINE_PER_TICK && t.refined < t.nbeam; n++) {
+    const c = t.beam[t.refined++];
+    let sum = 0;
+    for (const p of third) sum += aiBestLeaf(c.board, p, t.tetris_play);
+    const score = c.pieces + Math.trunc(sum / third.length);
+    if (score > t.ai_best && aiReachable(t, c.x, c.rot, true)) {
+      t.ai_best = score; t.ai_x = c.x; t.ai_rot = c.rot;
+    }
+  }
+}
+
+function aiRun(t) {
+  if (t.state === ST_FIRSTBLOCK) t.ai_state = AI_THINK;
+  if (t.ai_state === AI_THINK) {
+    aiMove(t);
+    t.ai_state = AI_MOVE;
+  } else if (t.ai_state === AI_MOVE) {
+    aiRefine(t);
+    const ex = t.ai_x - t.x, er = t.ai_rot - t.rot;
+    if (ex > 0) t.keys.right = 1;
+    if (ex < 0) t.keys.left = 1;
+    if (er > 0) t.keys.rot_left = 1;
+    if (er < 0) t.keys.rot_right = 1;
+    if (ex === 0 && er === 0 && t.refined >= t.nbeam) {
+      if (t.ai_superfast) t.keys.warp_down = 1;
+      t.ai_state = AI_IDLE;
+    }
+  } else {
+    t.keys.fast_down = 1;
+  }
+}
+
+/* --------------------------------------------------------- game loop -- */
+
+function addScore(t, points) { t.score += points; }   /* a double is exact far past any game */
+
+function spawn(t) {
+  t.block = t.next; t.rot = 0; t.x = COLS / 2 - 2; t.y = 0;
+  t.next = selectRandomBlock(t);
+  t.lock_ticks = 0; t.lock_resets = 0; t.lowest = 0; t.last_rot = 0; t.kick2 = 0; t.lock_moved = 0;
+}
+
+/* A cell for the T-spin corners: walls and floor count as taken. */
+function taken(map, x, y) {
+  return x < 0 || x >= COLS || y >= ROWS || (y >= 0 && map[y * COLS + x] !== 0);
+}
+
+/* 0, or 1 for a mini T-spin, 2 for a full one, of the piece as it locks. */
+function tSpin(t) {
+  if (!t.modern || t.block !== T_BLOCK || !t.last_rot) return 0;
+  let corners = 0, front = 0;
+  for (const [r, c] of T_CORNERS) corners += taken(t.map, t.x + c, t.y + r) ? 1 : 0;
+  for (const [r, c] of T_FRONT[t.rot]) front += taken(t.map, t.x + c, t.y + r) ? 1 : 0;
+  if (corners < 3) return 0;
+  return (front === 2 || t.kick2) ? 2 : 1;
+}
+
+function tetrisInit(seed) {
+  const t = {
+    map: new Int8Array(ROWS * COLS), state: ST_FIRSTBLOCK, block: 0, rot: 0, next: 0, x: 0, y: 0,
+    frame: 0, speed: 20, clearflashcount: 0, score: 0, lines: 0, level: 1,
+    linestat: [0, 0, 0, 0], warpcount: 0, ticks: 0, levelup_ticks: 0,
+    keys: { left: 0, right: 0, rot_left: 0, rot_right: 0, rot_180: 0, fast_down: 0, warp_down: 0 },
+    bag: new Uint8Array(PIECES), bagindex: PIECES, rng: (seed >>> 0) || 0x2545F491,
+    ai_active: 1, ai_superfast: 0, ai_blunder: 0, ai_state: AI_THINK, ai_x: 0, ai_rot: 0,
+    tetris_play: 0, nbeam: 0, refined: 0, ai_best: AI_NO_MOVE, beam: [],
+    modern: 0, lock_ticks: 0, lock_resets: 0, lowest: 0, last_rot: 0, kick2: 0, lock_moved: 0,
+    tspin: 0, tspin_lines: 0, tspin_ticks: 0,
+  };
+  for (let k = 0; k < AI_BEAM; k++)
+    t.beam.push({ score: 0, pieces: 0, x: 0, rot: 0, board: new Uint16Array(ROWS) });
+  t.next = selectRandomBlock(t);
+  spawn(t);
+  return t;
+}
+
+function stateNormal(t) {
+  const rotsave = t.rot, nrot = ROTATIONS[t.block], x0 = t.x;
+  let xshift = 0, yoffset = 0;
+  if (t.ai_active) aiRun(t);
+  if (t.keys.left) xshift -= 1;
+  if (t.keys.right) xshift += 1;
+  if (xshift !== 0 && !collides(t.map, t.block, t.rot, t.x + xshift, t.y)) { t.x += xshift; t.last_rot = 0; }
+  if (t.keys.rot_left) t.rot += 1;
+  if (t.keys.rot_right) t.rot += nrot - 1;
+  if (t.keys.rot_180 && nrot === 4) t.rot += 2;   /* a human's only, the page's */
+  t.rot %= nrot;
+  if (t.rot !== rotsave && t.block !== 3) {
+    const k = kickRotation(t.map, t.block, rotsave, t.rot, t.x, t.y);
+    if (k) { t.kick2 = Math.abs(k.y - t.y) === 2 ? 1 : 0; t.x = k.x; t.y = k.y; t.last_rot = 1; }
+    else t.rot = rotsave;
+  }
+  if (t.keys.warp_down) {
+    const gy = ghostPos(t.map, t.block, t.rot, t.x, t.y);
+    if (gy !== t.y && gy > 0) { addScore(t, gy - t.y); t.warpcount++; t.y = gy; t.frame = 0; t.last_rot = 0; }
+  }
+  if (t.frame === 0 || t.keys.fast_down) yoffset = 1;
+  if (t.modern) {
+    /* Lock delay, see LOCK_TICKS. */
+    const moved = t.x !== x0 || t.rot !== rotsave || t.lock_moved;
+    t.lock_moved = 0;
+    if (!t.keys.warp_down) {
+      if (!collides(t.map, t.block, t.rot, t.x, t.y + 1)) {
+        if (yoffset) { t.y += 1; t.last_rot = 0; }
+        if (t.y > t.lowest) { t.lowest = t.y; t.lock_resets = 0; }
+        t.lock_ticks = 0;
+        t.state = ST_NORMAL;
+        return;
+      }
+      if (moved && t.lock_resets < LOCK_RESETS) { t.lock_resets++; t.lock_ticks = 0; }
+      if (++t.lock_ticks < LOCK_TICKS) return;
+    }
+  } else if (!collides(t.map, t.block, t.rot, t.x, t.y + yoffset)) {
+    t.y += yoffset;
+    t.state = ST_NORMAL;
+    return;
+  }
+  if (t.state === ST_FIRSTBLOCK && t.y < 1) { t.state = ST_GAMEOVER; return; }
+  const ts = tSpin(t);
+  stamp(t.map, t.block, t.rot, t.x, t.y);
+  const cur = flashCompleteLines(t.map);
+  if (ts) addScore(t, t.level * (ts === 2 ? TSPIN_SCORE : TSPIN_MINI_SCORE)[cur]);
+  if (ts || cur >= 3) {
+    /* the page's banner in the title bar: a T-spin, three or four lines */
+    t.tspin = ts; t.tspin_lines = cur; t.tspin_ticks = TSPIN_TICKS;
+  }
+  if (cur > 0) {
+    t.linestat[cur - 1]++;
+    t.lines += cur;
+    if (!ts) addScore(t, t.level * LINESCORE[cur - 1]);
+    let nl = Math.floor(t.lines / 10) + 1;
+    if (nl > MAX_LEVEL) nl = MAX_LEVEL;
+    if (nl > t.level) t.levelup_ticks = LEVELUP_TICKS;
+    t.level = nl;
+    t.speed = 21 - t.level;
+    t.state = ST_CLEARLINES;
+    t.clearflashcount = cur * FLASH_COUNT;
+    t.frame = 0;
+  } else {
+    t.state = ST_FIRSTBLOCK;
+  }
+  spawn(t);
+  t.keys.fast_down = 0;
+}
+
+function stateClearLines(t) {
+  const lines = flashCompleteLines(t.map);
+  t.clearflashcount--;
+  if (t.clearflashcount < 0) {
+    clearBottomLine(t.map);
+    t.clearflashcount = lines * FLASH_COUNT;
+    if (lines <= 1) t.state = ST_FIRSTBLOCK;
+  }
+}
+
+function tetrisTick(t) {
+  if (t.state === ST_GAMEOVER) return;
+  t.ticks++;
+  if (t.levelup_ticks > 0) t.levelup_ticks--;
+  if (t.tspin_ticks > 0) t.tspin_ticks--;
+  if (++t.frame > t.speed) t.frame = 0;
+  if (t.state === ST_FIRSTBLOCK || t.state === ST_NORMAL) stateNormal(t);
+  else if (t.state === ST_CLEARLINES) stateClearLines(t);
+  const k = t.keys;
+  k.left = k.right = k.rot_left = k.rot_right = k.rot_180 = k.warp_down = 0;
+}
+
+/* --------------------------------------------- line clear effects (fx) -- */
+
+const FX_MS = [0, 0, 720, 720, 1280];
+const FX_WARM = 0xFFBE46, FX_COOL = 0x46BEFF, FX_INK = 0x2A1A08, FX_RAINBOW = 0xFF6464;
+
+function fxLinesCleared(fx, lines, now) {
+  if (lines < 2) return;
+  if (lines > 4) lines = 4;
+  if (fx.lines > lines && now - fx.start < FX_MS[fx.lines]) return;
+  fx.start = now; fx.lines = lines;
+}
+
+function ramp(t, t0, t1, t2, t3) {
+  let x;
+  if (t <= t0 || t >= t3) return 0;
+  if (t < t1) x = Math.floor((t - t0) * 256 / (t1 - t0));
+  else if (t <= t2) return 256;
+  else x = Math.floor((t3 - t) * 256 / (t3 - t2));
+  return (x * x * (768 - 2 * x)) >>> 16;
+}
+function ch(c, s) { return (c >>> s) & 0xFF; }
+function mix(c, d, a) {
+  let out = 0;
+  for (let s = 0; s <= 16; s += 8) out |= (((ch(c, s) * (256 - a) + ch(d, s) * a) >>> 8) << s);
+  return out;
+}
+function screen(c, t) {
+  let out = 0;
+  for (let s = 0; s <= 16; s += 8)
+    out |= ((255 - Math.floor((255 - ch(c, s)) * (255 - ch(t, s)) / 255)) << s);
+  return out;
+}
+function hue(c, phase) {
+  const r = ch(c, 16), g = ch(c, 8), b = ch(c, 0);
+  const p = [c, (b << 16) | (r << 8) | g, (g << 16) | (b << 8) | r];
+  const s = (phase >>> 8) % 3;
+  return mix(p[s], p[(s + 1) % 3], phase & 0xFF);
+}
+function textness(c) {
+  const r = ch(c, 16), g = ch(c, 8), b = ch(c, 0);
+  const hi = Math.max(r, g, b), lo = Math.min(r, g, b);
+  const luma = (r * 77 + g * 150 + b * 29) >>> 8;
+  if (luma <= 95 || hi - lo >= 16) return 0;
+  const w = luma >= 140 ? 256 : Math.floor((luma - 95) * 256 / 45);
+  return Math.floor(w * (16 - (hi - lo)) / 16);
+}
+
+/* The colour transform of the running effect at now, or null for none.
+ * ink: for text, which turns dark on the lit picture. The board has one
+ * palette for everything and tells text by its colour; here tiles and
+ * background never get the ink, so a whitened flashing line stays white. */
+function fxTransform(fx, now, ink) {
+  const t = now - fx.start;
+  if (fx.lines === 0 || t >= FX_MS[fx.lines]) return null;
+  let env, light, lightC;
+  if (fx.lines <= 3) {
+    env = ramp(t, 0, 120, 280, 720);
+    light = (env * 160) >>> 8;
+    lightC = fx.lines === 2 ? FX_WARM : FX_COOL;
+  } else {
+    /* A pastel light going once round the colour wheel. */
+    env = ramp(t, 0, 160, 960, 1280);
+    light = (env * 150) >>> 8;
+    lightC = mix(hue(FX_RAINBOW, Math.floor(t * 768 / 1280)), 0xFFFFFF, 128);
+  }
+  const cache = new Map();
+  return function (c0) {
+    let c = cache.get(c0);
+    if (c !== undefined) return c;
+    const k = ink ? textness(c0) : 0;
+    c = c0;
+    if (light !== 0) c = mix(c, screen(c, lightC), light);
+    if (k !== 0) c = mix(c, FX_INK, (k * env) >>> 8);
+    cache.set(c0, c);
+    return c;
+  };
+}
+
+/* Slam (fx_slam() / fx_shake()): a big clear pulls the picture down and
+ * lets it spring back, like on a rubber band. Thousandths of the amplitude
+ * every 25 ms; the board shows every other point, here it is smooth. */
+const SLAM = [0, 700, 1000, 850, 550, 250, 0, -150, -200, -150, -80, -20, 0];
+const SLAM_STEP = 25, SLAM_MS = SLAM_STEP * (SLAM.length - 1);
+
+function fxSlam(fx, lines, hard, human, now, locked) {
+  let amp;
+  if (lines >= 4) amp = hard ? 80 : 50;
+  else if (lines === 3) amp = hard ? 40 : 25;
+  else if (human && hard) amp = 8;
+  else if (human && locked) amp = 4;   /* the page only: a human's piece setting down */
+  else return;
+  if (now - fx.slam_ms < SLAM_MS && amp < fx.slam_amp) return;
+  fx.slam_ms = now; fx.slam_amp = amp;
+}
+
+/* Pixels (of the board's 240x320) the picture is pulled down at now. */
+function fxShake(fx, now) {
+  const t = now - fx.slam_ms;
+  if (!fx.slam_amp || t < 0 || t >= SLAM_MS) return 0;
+  const i = Math.floor(t / SLAM_STEP), f = (t - i * SLAM_STEP) / SLAM_STEP;
+  return (SLAM[i] + (SLAM[i + 1] - SLAM[i]) * f) * fx.slam_amp / 10000;
+}
+
+/* ---------------------------------------------------- the ornament -- */
+
+const GAMEOVER_MS = 8000;
+/* A held left/right, as on the NES: the first step at once, the next after
+ * the delay (DAS, there 16 frames, 267 ms; here on the game's 50 ms
+ * steps), then one every 100 ms (6 frames there). */
+const REPEAT_DELAY_MS = 250, REPEAT_MS = 100, TAKEOVER_GUARD_MS = 1000;
+const HARD_GUARD_MS = 300;   /* see KEY_HARD in appInput */
+const KEY_LEFT = 1, KEY_RIGHT = 2, KEY_CW = 3, KEY_CCW = 4, KEY_SOFT = 5, KEY_HARD = 6, KEY_180 = 7;
+const UNDO_DEPTH = 50;   /* pieces a human can go back */
+
+function nextSeed(a) {
+  let x = a.rng;
+  x ^= x << 13; x >>>= 0;
+  x ^= x >>> 17;
+  x ^= x << 5; x >>>= 0;
+  a.rng = x;
+  return x;
+}
+
+function newGame(a, human) {
+  a.game = tetrisInit(nextSeed(a));
+  a.game.ai_blunder = a.blunder;
+  a.game.ai_superfast = a.fast ? 1 : 0;
+  a.game.ai_active = human ? 0 : 1;
+  a.game.modern = human ? 1 : 0;
+  a.human = !!human;
+  a.best_before = human ? a.hs.human_best : a.hs.best_score;
+  a.lines_before = human ? a.hs.human_lines : a.hs.best_lines;
+  a.game_over = false;
+  a.new_record = false;
+  a.hold = 0;
+  a.soft = false;
+  a.undo = [];
+  a.undos = 0;
+  if (human) pushUndo(a);
+}
+
+/* Undo, for a human only. The game as each piece appeared, so that the
+ * piece can be placed again. With the randomizer in the snapshot the same
+ * pieces come again, and score and lines go back too. */
+function cloneGame(t) {
+  return Object.assign({}, t, {
+    map: t.map.slice(), bag: t.bag.slice(), linestat: t.linestat.slice(),
+    keys: { left: 0, right: 0, rot_left: 0, rot_right: 0, rot_180: 0, fast_down: 0, warp_down: 0 },
+  });
+}
+function pushUndo(a) {
+  const s = cloneGame(a.game);
+  s.placed = null;
+  a.undo.push(s);
+  if (a.undo.length > UNDO_DEPTH) a.undo.shift();
+}
+/* Back to where the last placed piece appeared. Also from the game over
+ * screen of a human's game. Returns whether there was anything to undo. */
+function appUndo(a) {
+  if (!a.human || a.undo.length === 0) return false;
+  const t = a.game, top = a.undo[a.undo.length - 1];
+  /* A snapshot is taken as the next piece comes in, which the game does
+   * right when a piece locks, before any lines flash. If the top one is
+   * still the piece in play (same place in the bag), go one further back. */
+  if (top.bagindex === t.bagindex && top.rng === t.rng) {
+    if (a.undo.length < 2) return false;
+    a.undo.pop();
+  }
+  if (a.game_over) { a.game_over = false; a.hs.games--; a.dirty = true; }
+  const snap = a.undo[a.undo.length - 1];
+  a.game = cloneGame(snap);
+  delete a.game.placed;
+  /* Mostly the piece was turned right and lay a column off: it comes back
+   * turned and above where it lay, where it fits up there. */
+  const p = snap.placed, g = a.game;
+  if (p && !collides(g.map, g.block, p.rot, p.x, g.y)) { g.rot = p.rot; g.x = p.x; }
+  else if (p && !collides(g.map, g.block, p.rot, g.x, g.y)) g.rot = p.rot;
+  a.hold = 0;
+  a.soft = false;
+  a.undos++;
+  return true;
+}
+
+function appInit(seed, blunder, hs) {
+  const a = {
+    hs: Object.assign({ best_score: 0, best_lines: 0, games: 0, human_best: 0, human_lines: 0 }, hs || {}),
+    rng: 1, blunder: blunder | 0, fast: false, now: 0,
+    game: null, game_over: false, over_since: 0, new_record: false, human: false,
+    hold: 0, hold_since: 0, repeat_at: 0, soft: false, hard_at: -1e9, acted: true,
+    best_before: 0, lines_before: 0,
+    fx: { start: 0, lines: 0, slam_ms: 0, slam_amp: 0 }, dirty: false,
+  };
+  a.rng = ((seed >>> 0) ^ Math.imul(a.hs.games, 0x9E3779B9)) >>> 0 | 1;
+  newGame(a, false);
+  return a;
+}
+
+function takeScore(a) {
+  if (a.human) {
+    if (a.game.score > a.hs.human_best) {
+      a.hs.human_best = a.game.score;
+      a.hs.human_lines = a.game.lines;
+      a.dirty = true;
+    }
+    return;
+  }
+  if (a.game.score > a.hs.best_score) {
+    a.hs.best_score = a.game.score;
+    a.hs.best_lines = a.game.lines;
+    a.dirty = true;
+  }
+}
+
+/* A key of a human player. While the AI plays (or on the game over
+ * screen) the first press takes over and starts a game, as touch does on
+ * the board. Returns whether the key belongs to the game. */
+function appInput(a, key, down) {
+  if (!a.human || a.game_over) {
+    if (!down) return true;
+    if (a.game_over && a.now - a.over_since < TAKEOVER_GUARD_MS) return true;
+    newGame(a, true);
+    return true;
+  }
+  const k = a.game.keys;
+  if (key === KEY_LEFT || key === KEY_RIGHT) {
+    if (down && a.hold !== key) {
+      a.hold = key; a.hold_since = a.now; a.repeat_at = a.now;
+      /* Now, not with the next step; while lines flash, with that. */
+      if (!appShift(a, key === KEY_LEFT ? -1 : 1)) {
+        if (key === KEY_LEFT) k.left = 1; else k.right = 1;
+      }
+    } else if (!down && a.hold === key) {
+      a.hold = 0;
+    }
+  } else if (key === KEY_SOFT) {
+    a.soft = down;
+  } else if (down) {
+    if (key === KEY_CW) k.rot_left = 1;      /* rotation index + 1 */
+    if (key === KEY_CCW) k.rot_right = 1;
+    if (key === KEY_180) k.rot_180 = 1;
+    if (key === KEY_HARD) {
+      /* A second hard drop right after one, with nothing done to the new
+       * piece in between, is a key or a flick twice by mistake far more
+       * often than meant: it does not count. */
+      if (a.acted || a.now - a.hard_at >= HARD_GUARD_MS) {
+        k.warp_down = 1;
+        a.hard_at = a.now;
+        a.acted = false;
+      }
+      return true;
+    }
+  }
+  if (down && key !== KEY_SOFT) a.acted = true;
+  return true;
+}
+
+/* A human's piece one column over right now, not with the next step: a
+ * swipe moves it as fast as the finger goes, not one column a step.
+ * Returns whether it moved. */
+function appShift(a, dir) {
+  const t = a.game;
+  if (!a.human || a.game_over || (t.state !== ST_NORMAL && t.state !== ST_FIRSTBLOCK)) return false;
+  if (collides(t.map, t.block, t.rot, t.x + dir, t.y)) return false;
+  t.x += dir;
+  t.lock_moved = 1;   /* a move on the ground: the lock delay again */
+  t.last_rot = 0;
+  a.acted = true;
+  return true;
+}
+
+function appTick(a) {
+  a.now += TICK_MS;
+  if (a.game_over) {
+    if (a.now - a.over_since >= GAMEOVER_MS) newGame(a, false);
+    return;
+  }
+  if (a.human) {
+    const k = a.game.keys;
+    /* Held left/right: first repeat after the delay, then every period. */
+    if (a.hold && a.now - a.hold_since >= REPEAT_DELAY_MS && a.now - a.repeat_at >= REPEAT_MS) {
+      a.repeat_at = a.now;
+      if (a.hold === KEY_LEFT) k.left = 1; else k.right = 1;
+    }
+    k.fast_down = a.soft ? 1 : 0;
+  }
+  const lines = a.game.lines, warps = a.game.warpcount, bag = a.game.bagindex;
+  const rot = a.game.rot, x = a.game.x;
+  tetrisTick(a.game);
+  if (a.human && a.game.bagindex !== bag) {
+    /* The piece is down: where it went, for an undo to start from. */
+    const top = a.undo[a.undo.length - 1];
+    if (top && top.bagindex === bag) top.placed = { rot, x };
+    if (a.game.state !== ST_GAMEOVER) pushUndo(a);
+  }
+  const cleared = a.game.lines - lines;
+  if (cleared > 0) fxLinesCleared(a.fx, cleared, a.now);
+  fxSlam(a.fx, cleared, a.game.warpcount !== warps, a.human, a.now, a.game.bagindex !== bag);
+  if (a.game.state === ST_GAMEOVER) {
+    a.game_over = true;
+    a.over_since = a.now;
+    a.new_record = a.game.score > a.best_before;
+    a.hs.games++;
+    a.dirty = true;
+    takeScore(a);
+  } else if (a.game.score > a.hs.best_score && a.game.ticks % 1200 === 0) {
+    takeScore(a);   /* once a minute while ahead */
+  }
+}
+
+/* The AI takes over a human's game where it stands. What the player made
+ * so far counts for the player's best; the game, which the AI may well
+ * never lose, is the AI's from here, for its best. */
+function appHandOver(a) {
+  if (!a.human || a.game_over) return false;
+  const t = a.game;
+  takeScore(a);
+  a.human = false;
+  t.ai_active = 1;
+  t.modern = 0;   /* the AI plays the board's rules */
+  t.ai_superfast = a.fast ? 1 : 0;
+  t.ai_state = AI_THINK;   /* plans for the piece where it is */
+  a.hold = 0;
+  a.soft = false;
+  a.undo = [];
+  a.best_before = a.hs.best_score;
+  a.lines_before = a.hs.best_lines;
+  return true;
+}
+
+function appSetFast(a, on) {
+  a.fast = on;
+  a.game.ai_superfast = on ? 1 : 0;
+}
+
+</script>
+<script>
+"use strict";
+(function () {
+
+const params = new URLSearchParams(location.search);
+const num = (k, d, lo, hi) => {
+  const v = parseInt(params.get(k), 10);
+  return Number.isFinite(v) ? Math.max(lo, Math.min(hi, v)) : d;
+};
+const BLUNDER = num("blunder", 0, 0, 1000);
+const LEVEL = num("level", 0, 0, MAX_LEVEL);   /* 0: as the game goes */
+const SEED = num("seed", 0, 0, 0x7FFFFFFF);
+const GAMEOVER_MS = 3000;   /* the last field stays this long */
+
+const BG_FIELD = 0x000000, GRID = 0x0c0c0c;
+
+/* Tile colours of tetromino.js (index 0..6 = I J L O S T Z), and the white
+ * of a flashing line. */
+const COL = [0xB5D45D, 0x486793, 0xDFB062, 0xA7498D, 0xDFCA62, 0x4FB34F, 0xDF6262];
+const COL_L = [0x91AF3A, 0x2C4D79, 0xB88A3D, 0x892D70, 0xB8A33D, 0x319331, 0xB83D3D];
+const COL_H = [0xC6DF7E, 0x6986AE, 0xE7C183, 0xBD6BA6, 0xE7D683, 0x70C670, 0xE78383];
+const COL_S = 0xF0F0F0;
+
+const canvas = document.getElementById("field");
+const ctx = canvas.getContext("2d");
+const rgb = (c) => "#" + (c & 0xFFFFFF).toString(16).padStart(6, "0");
+
+/* --- game ------------------------------------------------------------- */
+
+let game = null, overAt = 0, now = 0, seq = 0;
+function newGame() {
+  const seed = SEED ? (SEED + seq++) >>> 0 : crypto.getRandomValues(new Uint32Array(1))[0] | 1;
+  game = tetrisInit(seed);
+  game.ai_active = 1;
+  game.ai_blunder = BLUNDER;
+  overAt = 0;
+}
+function step() {
+  now += TICK_MS;
+  if (game.state === ST_GAMEOVER) {
+    if (!overAt) overAt = now;
+    if (now - overAt >= GAMEOVER_MS) newGame();
+    return;
+  }
+  tetrisTick(game);
+  if (LEVEL) { game.level = LEVEL; game.speed = 21 - LEVEL; }
+}
+
+/* --- drawing: cells of whole device pixels ----------------------------- */
+
+const VISIBLE = ROWS - HIDDEN_ROWS;
+let cs = 8, ox = 0, oy = 0;
+const tiles = new Map();
+const bgMask = document.createElement("canvas");
+
+function resize() {
+  const dpr = Math.min(window.devicePixelRatio || 1, 4);
+  const w = Math.max(1, Math.round(canvas.clientWidth * dpr));
+  const h = Math.max(1, Math.round(canvas.clientHeight * dpr));
+  if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+  cs = Math.max(2, Math.floor(Math.min(w / COLS, h / VISIBLE)));
+  ox = Math.floor((w - COLS * cs) / 2);
+  oy = Math.floor((h - VISIBLE * cs) / 2);
+  tiles.clear();
+  buildBackground();
+  draw();
+}
+
+/* A tile drawn like tetromino.js: base, a gradient inside, a bevel. */
+function tile(key, base, high, low) {
+  let c = tiles.get(key);
+  if (c) return c;
+  c = document.createElement("canvas");
+  c.width = c.height = cs;
+  const g = c.getContext("2d"), tw = cs, r = tw / 6, lw = Math.max(1, tw / 25), h = lw / 2;
+  g.fillStyle = rgb(base);
+  g.fillRect(0, 0, tw, tw);
+  const grad = g.createLinearGradient(r, r, tw - r, tw - r);
+  grad.addColorStop(0, rgb(high));
+  grad.addColorStop(1, rgb(low));
+  g.fillStyle = grad;
+  g.fillRect(r, r, tw - 2 * r, tw - 2 * r);
+  g.lineWidth = lw;
+  for (let j = 0; j < 2; j++) {
+    const a = j * r + h, b = tw - j * r - h;
+    g.strokeStyle = rgb(low);
+    g.beginPath(); g.moveTo(a, b); g.lineTo(b, b); g.lineTo(b, a); g.stroke();
+    g.strokeStyle = rgb(high);
+    g.beginPath(); g.moveTo(a, b); g.lineTo(a, a); g.lineTo(b, a); g.stroke();
+  }
+  tiles.set(key, c);
+  return c;
+}
+function tileFor(v) {
+  if (v > 0) return tile("t" + v, COL[v - 1], COL_H[v - 1], COL_L[v - 1]);
+  return tile("f" + -v, COL_H[-v - 1], COL_L[-v - 1], COL_S);   /* a flashing line */
+}
+
+/* The field without pieces: black with a faint grid; made once per size. */
+function buildBackground() {
+  const w = COLS * cs, h = VISIBLE * cs;
+  bgMask.width = w; bgMask.height = h;
+  const g = bgMask.getContext("2d");
+  g.fillStyle = rgb(BG_FIELD);
+  g.fillRect(0, 0, w, h);
+  const lw = Math.max(1, Math.round(cs / 30));
+  g.globalCompositeOperation = "lighten";
+  g.fillStyle = rgb(GRID);
+  for (let c = 1; c < COLS; c++) g.fillRect(c * cs - lw, 0, lw, h);
+  for (let r = 1; r < VISIBLE; r++) g.fillRect(0, r * cs - lw, w, lw);
+  g.globalCompositeOperation = "source-over";
+}
+
+function draw() {
+  if (!game) return;
+  const t = game;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(bgMask, ox, oy);
+  const cell = (r, c) => [ox + c * cs, oy + (r - HIDDEN_ROWS) * cs];
+  for (let r = HIDDEN_ROWS; r < ROWS; r++)
+    for (let c = 0; c < COLS; c++) {
+      const v = t.map[r * COLS + c];
+      if (v !== 0) { const [x, y] = cell(r, c); ctx.drawImage(tileFor(v), x, y); }
+    }
+  if (t.state === ST_FIRSTBLOCK || t.state === ST_NORMAL) {
+    const n = SIZE[t.block];
+    for (let i = 0; i < n; i++)
+      for (let j = 0; j < n; j++) {
+        const v = pieceCell(t.block, t.rot, i, j);
+        if (v === 0 || t.y + i < HIDDEN_ROWS) continue;
+        const [x, y] = cell(t.y + i, t.x + j);
+        ctx.drawImage(tileFor(v), x, y);
+      }
+  }
+}
+
+/* --- loop: a step every 50 ms, a frame after each; nothing while hidden -- */
+
+let last = 0, acc = 0;
+function loop(ts) {
+  if (!last) last = ts;
+  acc += Math.min(ts - last, 250);
+  last = ts;
+  let steps = 0;
+  while (acc >= TICK_MS && steps < 5) { step(); acc -= TICK_MS; steps++; }
+  if (steps) draw();
+  requestAnimationFrame(loop);
+}
+document.addEventListener("visibilitychange", () => { if (!document.hidden) last = 0; });
+
+newGame();
+new ResizeObserver(resize).observe(canvas);
+resize();
+requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tetromino AI</title>
+<!--
+  Built by tools/gen_web.py from web/src/embed.html and the game and AI of
+  web/src/tetromino.html: edit those, not web/embed.html.
+
+  Tetromino AI to embed, for an iframe: only the field, the AI playing at
+  normal speed. No sound, no text, no score, no input. Around the field the
+  page is transparent; the field fills as much of the frame as it can with
+  whole pixels per cell. After a game over it starts the next.
+
+    <iframe src="embed.html" style="border:0; width:300px; height:560px"
+            title="Tetromino AI"></iframe>
+
+  URL:   ?seed=123      fixed seed instead of a random one
+         ?blunder=50    per mille of pieces the AI places at random (0:
+                        it never loses, and the game goes on for hours)
+         ?level=1       keep the game at this level (1 slow .. 20 fast)
+                        instead of rising with the lines
+-->
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: transparent; }
+  canvas { display: block; width: 100vw; height: 100vh; }
+</style>
+</head>
+<body>
+<canvas id="field" aria-hidden="true"></canvas>
+<script>
+@CORE@
+</script>
+<script>
+"use strict";
+(function () {
+
+const params = new URLSearchParams(location.search);
+const num = (k, d, lo, hi) => {
+  const v = parseInt(params.get(k), 10);
+  return Number.isFinite(v) ? Math.max(lo, Math.min(hi, v)) : d;
+};
+const BLUNDER = num("blunder", 0, 0, 1000);
+const LEVEL = num("level", 0, 0, MAX_LEVEL);   /* 0: as the game goes */
+const SEED = num("seed", 0, 0, 0x7FFFFFFF);
+const GAMEOVER_MS = 3000;   /* the last field stays this long */
+
+const BG_FIELD = 0x000000, GRID = 0x0c0c0c;
+
+/* Tile colours of tetromino.js (index 0..6 = I J L O S T Z), and the white
+ * of a flashing line. */
+const COL = [0xB5D45D, 0x486793, 0xDFB062, 0xA7498D, 0xDFCA62, 0x4FB34F, 0xDF6262];
+const COL_L = [0x91AF3A, 0x2C4D79, 0xB88A3D, 0x892D70, 0xB8A33D, 0x319331, 0xB83D3D];
+const COL_H = [0xC6DF7E, 0x6986AE, 0xE7C183, 0xBD6BA6, 0xE7D683, 0x70C670, 0xE78383];
+const COL_S = 0xF0F0F0;
+
+const canvas = document.getElementById("field");
+const ctx = canvas.getContext("2d");
+const rgb = (c) => "#" + (c & 0xFFFFFF).toString(16).padStart(6, "0");
+
+/* --- game ------------------------------------------------------------- */
+
+let game = null, overAt = 0, now = 0, seq = 0;
+function newGame() {
+  const seed = SEED ? (SEED + seq++) >>> 0 : crypto.getRandomValues(new Uint32Array(1))[0] | 1;
+  game = tetrisInit(seed);
+  game.ai_active = 1;
+  game.ai_blunder = BLUNDER;
+  overAt = 0;
+}
+function step() {
+  now += TICK_MS;
+  if (game.state === ST_GAMEOVER) {
+    if (!overAt) overAt = now;
+    if (now - overAt >= GAMEOVER_MS) newGame();
+    return;
+  }
+  tetrisTick(game);
+  if (LEVEL) { game.level = LEVEL; game.speed = 21 - LEVEL; }
+}
+
+/* --- drawing: cells of whole device pixels ----------------------------- */
+
+const VISIBLE = ROWS - HIDDEN_ROWS;
+let cs = 8, ox = 0, oy = 0;
+const tiles = new Map();
+const bgMask = document.createElement("canvas");
+
+function resize() {
+  const dpr = Math.min(window.devicePixelRatio || 1, 4);
+  const w = Math.max(1, Math.round(canvas.clientWidth * dpr));
+  const h = Math.max(1, Math.round(canvas.clientHeight * dpr));
+  if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+  cs = Math.max(2, Math.floor(Math.min(w / COLS, h / VISIBLE)));
+  ox = Math.floor((w - COLS * cs) / 2);
+  oy = Math.floor((h - VISIBLE * cs) / 2);
+  tiles.clear();
+  buildBackground();
+  draw();
+}
+
+/* A tile drawn like tetromino.js: base, a gradient inside, a bevel. */
+function tile(key, base, high, low) {
+  let c = tiles.get(key);
+  if (c) return c;
+  c = document.createElement("canvas");
+  c.width = c.height = cs;
+  const g = c.getContext("2d"), tw = cs, r = tw / 6, lw = Math.max(1, tw / 25), h = lw / 2;
+  g.fillStyle = rgb(base);
+  g.fillRect(0, 0, tw, tw);
+  const grad = g.createLinearGradient(r, r, tw - r, tw - r);
+  grad.addColorStop(0, rgb(high));
+  grad.addColorStop(1, rgb(low));
+  g.fillStyle = grad;
+  g.fillRect(r, r, tw - 2 * r, tw - 2 * r);
+  g.lineWidth = lw;
+  for (let j = 0; j < 2; j++) {
+    const a = j * r + h, b = tw - j * r - h;
+    g.strokeStyle = rgb(low);
+    g.beginPath(); g.moveTo(a, b); g.lineTo(b, b); g.lineTo(b, a); g.stroke();
+    g.strokeStyle = rgb(high);
+    g.beginPath(); g.moveTo(a, b); g.lineTo(a, a); g.lineTo(b, a); g.stroke();
+  }
+  tiles.set(key, c);
+  return c;
+}
+function tileFor(v) {
+  if (v > 0) return tile("t" + v, COL[v - 1], COL_H[v - 1], COL_L[v - 1]);
+  return tile("f" + -v, COL_H[-v - 1], COL_L[-v - 1], COL_S);   /* a flashing line */
+}
+
+/* The field without pieces: black with a faint grid; made once per size. */
+function buildBackground() {
+  const w = COLS * cs, h = VISIBLE * cs;
+  bgMask.width = w; bgMask.height = h;
+  const g = bgMask.getContext("2d");
+  g.fillStyle = rgb(BG_FIELD);
+  g.fillRect(0, 0, w, h);
+  const lw = Math.max(1, Math.round(cs / 30));
+  g.globalCompositeOperation = "lighten";
+  g.fillStyle = rgb(GRID);
+  for (let c = 1; c < COLS; c++) g.fillRect(c * cs - lw, 0, lw, h);
+  for (let r = 1; r < VISIBLE; r++) g.fillRect(0, r * cs - lw, w, lw);
+  g.globalCompositeOperation = "source-over";
+}
+
+function draw() {
+  if (!game) return;
+  const t = game;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(bgMask, ox, oy);
+  const cell = (r, c) => [ox + c * cs, oy + (r - HIDDEN_ROWS) * cs];
+  for (let r = HIDDEN_ROWS; r < ROWS; r++)
+    for (let c = 0; c < COLS; c++) {
+      const v = t.map[r * COLS + c];
+      if (v !== 0) { const [x, y] = cell(r, c); ctx.drawImage(tileFor(v), x, y); }
+    }
+  if (t.state === ST_FIRSTBLOCK || t.state === ST_NORMAL) {
+    const n = SIZE[t.block];
+    for (let i = 0; i < n; i++)
+      for (let j = 0; j < n; j++) {
+        const v = pieceCell(t.block, t.rot, i, j);
+        if (v === 0 || t.y + i < HIDDEN_ROWS) continue;
+        const [x, y] = cell(t.y + i, t.x + j);
+        ctx.drawImage(tileFor(v), x, y);
+      }
+  }
+}
+
+/* --- loop: a step every 50 ms, a frame after each; nothing while hidden -- */
+
+let last = 0, acc = 0;
+function loop(ts) {
+  if (!last) last = ts;
+  acc += Math.min(ts - last, 250);
+  last = ts;
+  let steps = 0;
+  while (acc >= TICK_MS && steps < 5) { step(); acc -= TICK_MS; steps++; }
+  if (steps) draw();
+  requestAnimationFrame(loop);
+}
+document.addEventListener("visibilitychange", () => { if (!document.hidden) last = 0; });
+
+newGame();
+new ResizeObserver(resize).observe(canvas);
+resize();
+requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
