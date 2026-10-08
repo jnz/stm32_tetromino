@@ -9,14 +9,24 @@
   web/src/tetromino.html: edit those, not web/embed.html.
 
   Tetromino AI to embed, for an iframe: only the field, the AI playing at
-  normal speed. No sound, no text, no score, no input. Around the field the
-  page is transparent; the field fills as much of the frame as it can with
-  whole pixels per cell. After a game over it starts the next.
+  normal speed, with the light of a line clear and the rubber band pull of
+  three and four lines. No sound, no text, no score, no input. Around the
+  field the page is transparent; the field fills as much of the frame as it
+  can with whole pixels per cell. After a game over it starts the next.
 
-    <iframe src="embed.html" style="border:0; width:300px; height:560px"
-            title="Tetromino AI"></iframe>
+    <iframe src="embed.html" title="Tetromino AI" tabindex="-1"
+            style="border:0; width:300px; height:560px; pointer-events:none">
+    </iframe>
 
-  URL:   ?seed=123      fixed seed instead of a random one
+  pointer-events:none and tabindex="-1": a click or a tab never moves the
+  focus into the frame, so the keys stay with the page around it (a
+  reveal.js deck keeps its arrow keys). In reveal.js, data-src instead of
+  src loads it only when its slide comes near.
+
+  URL:   ?mode=bw       line art, black on white (slides on white)
+         ?mode=wb       line art, white on black
+                        (without: the colours of the game)
+         ?seed=123      fixed seed instead of a random one
          ?blunder=50    per mille of pieces the AI places at random (0:
                         it never loses, and the game goes on for hours)
          ?level=1       keep the game at this level (1 slow .. 20 fast)
@@ -952,24 +962,33 @@ const num = (k, d, lo, hi) => {
 const BLUNDER = num("blunder", 0, 0, 1000);
 const LEVEL = num("level", 0, 0, MAX_LEVEL);   /* 0: as the game goes */
 const SEED = num("seed", 0, 0, 0x7FFFFFFF);
+const MODE = ["bw", "wb"].includes(params.get("mode")) ? params.get("mode") : "color";
+const LINE_ART = MODE !== "color";
 const GAMEOVER_MS = 3000;   /* the last field stays this long */
+const BOARD_TILE = 15;      /* board pixels per cell: the unit of the pull */
 
-const BG_FIELD = 0x000000, GRID = 0x0c0c0c;
-
-/* Tile colours of tetromino.js (index 0..6 = I J L O S T Z), and the white
- * of a flashing line. */
+/* Colours: the game's, or ink and paper for the line art. */
 const COL = [0xB5D45D, 0x486793, 0xDFB062, 0xA7498D, 0xDFCA62, 0x4FB34F, 0xDF6262];
 const COL_L = [0x91AF3A, 0x2C4D79, 0xB88A3D, 0x892D70, 0xB8A33D, 0x319331, 0xB83D3D];
 const COL_H = [0xC6DF7E, 0x6986AE, 0xE7C183, 0xBD6BA6, 0xE7D683, 0x70C670, 0xE78383];
 const COL_S = 0xF0F0F0;
+const INK = MODE === "bw" ? 0x000000 : 0xFFFFFF;
+const PAPER = MODE === "bw" ? 0xFFFFFF : 0x000000;
+const FIELD = LINE_ART ? PAPER : 0x000000;
+const GRID = LINE_ART ? mixC(PAPER, INK, 0.35) : 0x0c0c0c;
 
 const canvas = document.getElementById("field");
 const ctx = canvas.getContext("2d");
 const rgb = (c) => "#" + (c & 0xFFFFFF).toString(16).padStart(6, "0");
+function mixC(a, b, k) {
+  const m = (sh) => Math.round(((a >>> sh) & 255) * (1 - k) + ((b >>> sh) & 255) * k) << sh;
+  return m(16) | m(8) | m(0);
+}
 
 /* --- game ------------------------------------------------------------- */
 
 let game = null, overAt = 0, now = 0, seq = 0;
+const fx = { start: 0, lines: 0, slam_ms: 0, slam_amp: 0 };
 function newGame() {
   const seed = SEED ? (SEED + seq++) >>> 0 : crypto.getRandomValues(new Uint32Array(1))[0] | 1;
   game = tetrisInit(seed);
@@ -984,35 +1003,52 @@ function step() {
     if (now - overAt >= GAMEOVER_MS) newGame();
     return;
   }
+  const lines = game.lines, warps = game.warpcount;
   tetrisTick(game);
   if (LEVEL) { game.level = LEVEL; game.speed = 21 - LEVEL; }
+  const cleared = game.lines - lines;
+  if (cleared > 0) fxLinesCleared(fx, cleared, now);
+  fxSlam(fx, cleared, game.warpcount !== warps, false, now, false);
+}
+
+/* The colours of this moment: in colour the game's light, in the line art
+ * ink and paper trading places, halfway for two or three lines, all the
+ * way for four. Returns a function on colours, or null. */
+function look(t) {
+  if (!LINE_ART) return fxTransform(fx, t, false);
+  const dt = t - fx.start;
+  if (fx.lines === 0 || dt >= FX_MS[fx.lines]) return null;
+  const env = fx.lines <= 3 ? ramp(dt, 0, 120, 280, 720) : ramp(dt, 0, 160, 960, 1280);
+  const k = env / 256 * (fx.lines >= 4 ? 1 : 0.5);
+  if (k <= 0) return null;
+  return (c) => c === INK ? mixC(INK, PAPER, k) : c === PAPER ? mixC(PAPER, INK, k) : c;
 }
 
 /* --- drawing: cells of whole device pixels ----------------------------- */
 
 const VISIBLE = ROWS - HIDDEN_ROWS;
+const FRAME = 0.4, PULL = 0.4;   /* cells, see resize */
 let cs = 8, ox = 0, oy = 0;
 const tiles = new Map();
-const bgMask = document.createElement("canvas");
 
 function resize() {
   const dpr = Math.min(window.devicePixelRatio || 1, 4);
   const w = Math.max(1, Math.round(canvas.clientWidth * dpr));
   const h = Math.max(1, Math.round(canvas.clientHeight * dpr));
   if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
-  cs = Math.max(2, Math.floor(Math.min(w / COLS, h / VISIBLE)));
+  /* Room around the field, in cells: the dotted frame of the line art
+   * (FRAME on every side) and below for the pull (PULL). */
+  const fr = LINE_ART ? FRAME : 0;
+  cs = Math.max(2, Math.floor(Math.min(w / (COLS + 2 * fr), h / (VISIBLE + 2 * fr + PULL))));
   ox = Math.floor((w - COLS * cs) / 2);
-  oy = Math.floor((h - VISIBLE * cs) / 2);
+  oy = Math.floor((h - (VISIBLE + PULL) * cs) / 2);
   tiles.clear();
-  buildBackground();
-  draw();
+  draw(0);
 }
 
-/* A tile drawn like tetromino.js: base, a gradient inside, a bevel. */
-function tile(key, base, high, low) {
-  let c = tiles.get(key);
-  if (c) return c;
-  c = document.createElement("canvas");
+/* A tile of the game: base, a gradient inside, a bevel. */
+function colourTile(base, high, low) {
+  const c = document.createElement("canvas");
   c.width = c.height = cs;
   const g = c.getContext("2d"), tw = cs, r = tw / 6, lw = Math.max(1, tw / 25), h = lw / 2;
   g.fillStyle = rgb(base);
@@ -1030,39 +1066,110 @@ function tile(key, base, high, low) {
     g.strokeStyle = rgb(high);
     g.beginPath(); g.moveTo(a, b); g.lineTo(a, a); g.lineTo(b, a); g.stroke();
   }
-  tiles.set(key, c);
   return c;
 }
-function tileFor(v) {
-  if (v > 0) return tile("t" + v, COL[v - 1], COL_H[v - 1], COL_L[v - 1]);
-  return tile("f" + -v, COL_H[-v - 1], COL_L[-v - 1], COL_S);   /* a flashing line */
+
+/* A line art tile: a dotted edge and inside a figure of its own per kind
+ * of piece, so that the seven still tell apart without colour. A flashing
+ * line is the same in reverse. */
+function dots(g, x0, y0, x1, y1, gap, r) {
+  for (const [ax, ay, bx, by] of [[x0, y0, x1, y0], [x1, y0, x1, y1], [x1, y1, x0, y1], [x0, y1, x0, y0]]) {
+    const len = Math.hypot(bx - ax, by - ay), n = Math.max(1, Math.round(len / gap));
+    for (let i = 0; i < n; i++) {
+      const k = i / n;
+      g.beginPath(); g.arc(ax + (bx - ax) * k, ay + (by - ay) * k, r, 0, 2 * Math.PI); g.fill();
+    }
+  }
+}
+function lineTile(kind, ink, paper) {
+  const c = document.createElement("canvas");
+  c.width = c.height = cs;
+  const g = c.getContext("2d"), s = cs, m = s / 2;
+  const lw = Math.max(1, s / 16), r = Math.max(0.6, s / 26);
+  g.fillStyle = rgb(paper);
+  g.fillRect(0, 0, s, s);
+  g.fillStyle = rgb(ink);
+  g.strokeStyle = rgb(ink);
+  g.lineWidth = lw;
+  const e = s * 0.1;
+  dots(g, e, e, s - e, s - e, s / 6.5, r);
+  const sq = (k) => { const a = m - s * k, b = s * 2 * k; g.strokeRect(a, a, b, b); };
+  const dia = (k) => {
+    const d = s * k;
+    g.beginPath(); g.moveTo(m, m - d); g.lineTo(m + d, m); g.lineTo(m, m + d); g.lineTo(m - d, m);
+    g.closePath(); g.stroke();
+  };
+  switch (kind) {
+    case 0: sq(0.27); sq(0.17); sq(0.07); break;               /* I: three squares */
+    case 1: sq(0.24); g.fillRect(m - lw, m - lw, 2 * lw, 2 * lw); break;   /* J: square, dot */
+    case 2: sq(0.25); sq(0.13); break;                         /* L: two squares */
+    case 3: dia(0.3); dia(0.16); break;                        /* O: two diamonds */
+    case 4: dots(g, m - s * 0.22, m - s * 0.22, m + s * 0.22, m + s * 0.22, s / 9, r); break;   /* S */
+    case 5: dia(0.28); g.fillRect(m - lw, m - lw, 2 * lw, 2 * lw); break;  /* T: diamond, dot */
+    default: g.fillRect(m - s * 0.12, m - s * 0.12, s * 0.24, s * 0.24); break;   /* Z */
+  }
+  return c;
 }
 
-/* The field without pieces: black with a faint grid; made once per size. */
-function buildBackground() {
-  const w = COLS * cs, h = VISIBLE * cs;
-  bgMask.width = w; bgMask.height = h;
-  const g = bgMask.getContext("2d");
-  g.fillStyle = rgb(BG_FIELD);
-  g.fillRect(0, 0, w, h);
-  const lw = Math.max(1, Math.round(cs / 30));
-  g.globalCompositeOperation = "lighten";
-  g.fillStyle = rgb(GRID);
-  for (let c = 1; c < COLS; c++) g.fillRect(c * cs - lw, 0, lw, h);
-  for (let r = 1; r < VISIBLE; r++) g.fillRect(0, r * cs - lw, w, lw);
-  g.globalCompositeOperation = "source-over";
+/* The tile of a map value under the colours of this moment (tf, or none). */
+function tileFor(v, tf) {
+  const T = tf || ((c) => c), kind = Math.abs(v) - 1;
+  let key, make;
+  if (LINE_ART) {
+    const ink = T(INK), paper = T(PAPER);
+    key = (v > 0 ? "t" : "f") + kind + "." + ink + "." + paper;
+    make = () => v > 0 ? lineTile(kind, ink, paper) : lineTile(kind, paper, ink);
+  } else if (v > 0) {
+    const b = T(COL[kind]), hi = T(COL_H[kind]), lo = T(COL_L[kind]);
+    key = "t" + kind + "." + b + "." + hi;
+    make = () => colourTile(b, hi, lo);
+  } else {
+    const b = T(COL_H[kind]), hi = T(COL_L[kind]), lo = T(COL_S);
+    key = "f" + kind + "." + b + "." + hi;
+    make = () => colourTile(b, hi, lo);
+  }
+  let c = tiles.get(key);
+  if (!c) {
+    if (tiles.size > 400) tiles.clear();   /* the colours of a passed effect */
+    c = make();
+    tiles.set(key, c);
+  }
+  return c;
 }
 
-function draw() {
+function draw(acc) {
   if (!game) return;
-  const t = game;
+  const t = game, at = now + acc, tf = look(at);
+  const T = tf || ((c) => c);
+  const dy = Math.round(fxShake(fx, at) * cs / BOARD_TILE);
+  const x0 = ox, y0 = oy + dy, w = COLS * cs, h = VISIBLE * cs;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.drawImage(bgMask, ox, oy);
-  const cell = (r, c) => [ox + c * cs, oy + (r - HIDDEN_ROWS) * cs];
+  ctx.fillStyle = rgb(T(FIELD));
+  ctx.fillRect(x0, y0, w, h);
+  if (LINE_ART) {
+    /* a dot at every corner of the grid, the edge of the field dotted */
+    const ink = T(INK), r = Math.max(0.6, cs / 26);
+    ctx.fillStyle = rgb(mixC(T(PAPER), ink, 0.35));
+    for (let rr = 1; rr < VISIBLE; rr++)
+      for (let c = 1; c < COLS; c++) {
+        ctx.beginPath(); ctx.arc(x0 + c * cs, y0 + rr * cs, r, 0, 2 * Math.PI); ctx.fill();
+      }
+    ctx.fillStyle = rgb(ink);
+    const e = cs * (FRAME - 0.1);
+    dots(ctx, x0 - e, y0 - e, x0 + w + e, y0 + h + e, cs / 3, r);
+  } else {
+    const lw = Math.max(1, Math.round(cs / 30));
+    ctx.globalCompositeOperation = "lighten";
+    ctx.fillStyle = rgb(T(GRID));
+    for (let c = 1; c < COLS; c++) ctx.fillRect(x0 + c * cs - lw, y0, lw, h);
+    for (let rr = 1; rr < VISIBLE; rr++) ctx.fillRect(x0, y0 + rr * cs - lw, w, lw);
+    ctx.globalCompositeOperation = "source-over";
+  }
+  const cell = (r, c) => [x0 + c * cs, y0 + (r - HIDDEN_ROWS) * cs];
   for (let r = HIDDEN_ROWS; r < ROWS; r++)
     for (let c = 0; c < COLS; c++) {
       const v = t.map[r * COLS + c];
-      if (v !== 0) { const [x, y] = cell(r, c); ctx.drawImage(tileFor(v), x, y); }
+      if (v !== 0) { const [x, y] = cell(r, c); ctx.drawImage(tileFor(v, tf), x, y); }
     }
   if (t.state === ST_FIRSTBLOCK || t.state === ST_NORMAL) {
     const n = SIZE[t.block];
@@ -1071,21 +1178,25 @@ function draw() {
         const v = pieceCell(t.block, t.rot, i, j);
         if (v === 0 || t.y + i < HIDDEN_ROWS) continue;
         const [x, y] = cell(t.y + i, t.x + j);
-        ctx.drawImage(tileFor(v), x, y);
+        ctx.drawImage(tileFor(v, tf), x, y);
       }
   }
 }
 
-/* --- loop: a step every 50 ms, a frame after each; nothing while hidden -- */
+/* --- loop: a step every 50 ms and a frame after it; every display frame
+ * while an effect or the pull runs; nothing while hidden. -------------- */
 
-let last = 0, acc = 0;
+let last = 0, acc = 0, moving = false;
 function loop(ts) {
   if (!last) last = ts;
   acc += Math.min(ts - last, 250);
   last = ts;
   let steps = 0;
   while (acc >= TICK_MS && steps < 5) { step(); acc -= TICK_MS; steps++; }
-  if (steps) draw();
+  const at = now + acc;
+  const busy = fxShake(fx, at) !== 0 || look(at) !== null;
+  if (steps || busy || moving) draw(acc);
+  moving = busy;
   requestAnimationFrame(loop);
 }
 document.addEventListener("visibilitychange", () => { if (!document.hidden) last = 0; });

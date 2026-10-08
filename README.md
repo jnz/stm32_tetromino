@@ -102,11 +102,17 @@ and then.
 `web/embed.html` is only the field, the AI playing at normal speed, for an
 iframe: no sound, no text, no score, no input, transparent around the field.
 
-    <iframe src="embed.html" style="border:0; width:300px; height:560px"
-            title="Tetromino AI"></iframe>
+    <iframe src="embed.html" title="Tetromino AI" tabindex="-1"
+            style="border:0; width:300px; height:560px; pointer-events:none">
+    </iframe>
 
-`?level=1` keeps it at a level instead of getting faster with the lines,
-`?blunder=` and `?seed=` as above.
+`pointer-events:none` and `tabindex="-1"` keep the focus out of the frame,
+so the page keeps its keys (a reveal.js deck its arrow keys); in reveal.js,
+`data-src` instead of `src` loads it only when its slide comes near.
+
+`?mode=bw` draws it as line art, black on white (for slides on white),
+`?mode=wb` white on black. `?level=1` keeps it at a level instead of
+getting faster with the lines, `?blunder=` and `?seed=` as above.
 
 ## Regenerating the artwork
 
