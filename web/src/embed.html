@@ -23,14 +23,15 @@
   reveal.js deck keeps its arrow keys). In reveal.js, data-src instead of
   src loads it only when its slide comes near.
 
-  URL:   ?mode=bw       line art, black on white (slides on white)
-         ?mode=wb       line art, white on black
-                        (without: the colours of the game)
+  URL:   ?mode=wb       line art, white on black
+         ?mode=color    the colours of the game
+                        (without: line art, black on white, for slides on
+                        white)
          ?seed=123      fixed seed instead of a random one
          ?blunder=50    per mille of pieces the AI places at random (0:
                         it never loses, and the game goes on for hours)
-         ?level=1       keep the game at this level (1 slow .. 20 fast)
-                        instead of rising with the lines
+         ?level=1       the level the game stays at (1 slow .. 20 fast;
+                        without: 3); ?level=0 lets it rise with the lines
 -->
 <style>
   html, body { margin: 0; height: 100%; overflow: hidden; background: transparent; }
@@ -52,9 +53,9 @@ const num = (k, d, lo, hi) => {
   return Number.isFinite(v) ? Math.max(lo, Math.min(hi, v)) : d;
 };
 const BLUNDER = num("blunder", 0, 0, 1000);
-const LEVEL = num("level", 0, 0, MAX_LEVEL);   /* 0: as the game goes */
+const LEVEL = num("level", 3, 0, MAX_LEVEL);   /* 0: as the game goes */
 const SEED = num("seed", 0, 0, 0x7FFFFFFF);
-const MODE = ["bw", "wb"].includes(params.get("mode")) ? params.get("mode") : "color";
+const MODE = ["wb", "color"].includes(params.get("mode")) ? params.get("mode") : "bw";
 const LINE_ART = MODE !== "color";
 const GAMEOVER_MS = 3000;   /* the last field stays this long */
 const BOARD_TILE = 15;      /* board pixels per cell: the unit of the pull */

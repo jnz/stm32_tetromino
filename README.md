@@ -110,9 +110,10 @@ iframe: no sound, no text, no score, no input, transparent around the field.
 so the page keeps its keys (a reveal.js deck its arrow keys); in reveal.js,
 `data-src` instead of `src` loads it only when its slide comes near.
 
-`?mode=bw` draws it as line art, black on white (for slides on white),
-`?mode=wb` white on black. `?level=1` keeps it at a level instead of
-getting faster with the lines, `?blunder=` and `?seed=` as above.
+It is line art, black on white (for slides on white), at level 3;
+`?mode=wb` draws it white on black, `?mode=color` in the game's colours.
+`?level=1` .. `20` is the level it stays at, `?level=0` lets it get faster
+with the lines; `?blunder=` and `?seed=` as above.
 
 ## Regenerating the artwork
 
